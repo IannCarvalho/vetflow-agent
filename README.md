@@ -1,5 +1,7 @@
 # 🐾 vetflow-agent
 
+[![CI](https://github.com/IannCarvalho/vetflow-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/IannCarvalho/vetflow-agent/actions/workflows/ci.yml)
+
 Interface de **chat em Streamlit** que roda um **agente da Anthropic (Claude)**
 sobre as ferramentas expostas pelo servidor MCP [`vetflow-mcp`](../vetflow-mcp).
 Você conversa em linguagem natural ("quais vacinas vencem esse mês?", "quantos
