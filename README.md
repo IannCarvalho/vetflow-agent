@@ -21,22 +21,26 @@ O modelo (Claude, GPT, Gemini ou Bedrock) é escolhido por configuração — ve
 
 ## Como conecta (arquitetura)
 
-```
-  Widget (React, vetflow-frontend)          ou          app.py (Streamlit)
-                      │  POST /chat                              │ asyncio.run(run_agent)
-                      ▼                                          ▼
-               api.py (FastAPI) ───────────────► agent.py (loop de tool-use, formato OpenAI)
-                                                        │                         ▲
-                                                        │ litellm.acompletion     │ tools
-                                                        ▼                         │ (auto-discovery)
-                                              LiteLLM ► Claude/GPT/Gemini/Bedrock  │
-                                                        │                         │
-                                     dispatch_tool / list_tools ──────────────────┘
-                                                        ▼
-                     mcp_bridge.py ── stdio (subprocesso) ──► vetflow-mcp (python -m vetflow_mcp.server)
-                                                                      │  Bearer JWT
-                                                                      ▼
-                                                              Backend VetFlow (Go) ──► MongoDB
+```mermaid
+flowchart TD
+    fe["Widget (React)"]
+    st["app.py (Streamlit)"]
+    api["api.py (FastAPI)<br/>/chat · /providers/models"]
+    agent["agent.py<br/>loop de tool-use (OpenAI) · MAX_TURNS=12 · BYOK"]
+    llm{{"LiteLLM → Claude / GPT / Gemini / Bedrock"}}
+    bridge["mcp_bridge.py"]
+    mcp["vetflow-mcp<br/>(python -m vetflow_mcp.server)"]
+    be["Backend VetFlow (Go)"]
+    db[("MongoDB")]
+
+    fe -- "POST /chat" --> api
+    st -- "run_agent()" --> agent
+    api --> agent
+    agent -- "litellm.acompletion" --> llm
+    agent -- "dispatch_tool / list_tools" --> bridge
+    bridge -- "stdio (subprocesso)" --> mcp
+    mcp -- "Bearer JWT" --> be
+    be --> db
 ```
 
 - **`api.py`** (FastAPI) — `GET /health`, `GET /providers`,
