@@ -11,7 +11,13 @@ from types import SimpleNamespace
 
 import pytest
 
-import mcp_bridge
+# ExceptionGroup é builtin a partir do 3.11. Em 3.10 usamos o backport
+# `exceptiongroup` (dependência de teste), para o CI rodar em todas as versões.
+try:  # pragma: no cover - caminho depende da versão do Python
+    ExceptionGroup  # type: ignore[used-before-def]  # noqa: B018, F821
+except NameError:  # pragma: no cover
+    from exceptiongroup import ExceptionGroup  # type: ignore[no-redef]
+
 from mcp_bridge import (
     MCPConnectionError,
     _check_required_env,

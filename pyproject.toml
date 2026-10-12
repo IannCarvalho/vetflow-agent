@@ -1,3 +1,26 @@
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# Ruleset explícito para o CI e o ambiente local concordarem.
+select = ["E", "F", "I", "UP", "B", "SIM", "S"]
+ignore = [
+    # tempfile.TemporaryFile precisa de controle manual do ciclo de vida: o
+    # fileno é passado ao transporte stdio e fechado no finally de connect_session.
+    "SIM115",
+    # Alguns `with` aninhados (Streamlit placeholder+expander) ficam mais legíveis
+    # assim do que num único with multi-contexto.
+    "SIM117",
+    # try/except/pass é limpeza best-effort deliberada (fechar errlog, ler stderr).
+    "S110",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Testes podem usar asserts, credenciais fake e imports de conveniência.
+"tests/**" = ["S101", "S105", "S106"]
+"conftest.py" = ["S101"]

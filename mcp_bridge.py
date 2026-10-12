@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -161,10 +161,8 @@ async def connect_session():
                 detail=detail,
             ) from leaf
     finally:
-        try:
+        with suppress(Exception):
             errlog.close()
-        except Exception:  # noqa: BLE001
-            pass
 
 
 async def list_tools(session: ClientSession) -> list[Any]:

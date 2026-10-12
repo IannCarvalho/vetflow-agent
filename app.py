@@ -20,10 +20,9 @@ from dotenv import load_dotenv
 # também ao subprocesso MCP (que recebe uma cópia de os.environ).
 load_dotenv()
 
-import streamlit as st  # noqa: E402 - precisa vir depois do load_dotenv
+import streamlit as st  # noqa: E402 - precisa vir após load_dotenv()
 
 from agent import run_agent  # noqa: E402 - idem
-
 
 st.set_page_config(page_title="Assistente VetFlow", page_icon="🐾", layout="centered")
 
