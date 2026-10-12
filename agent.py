@@ -9,7 +9,6 @@ nenhum traceback cru escapa para a UI.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -21,12 +20,12 @@ from mcp_bridge import (
     list_tools,
     tools_to_anthropic,
 )
+from provider import ProviderUnavailable, build_client
 
 # Trava de segurança: no máximo 12 idas e voltas de tool-use por mensagem, para
 # o modelo não entrar num laço infinito de chamadas de ferramenta.
 MAX_TURNS = 12
 
-MODEL = "claude-3-5-sonnet-latest"
 MAX_TOKENS = 2048
 
 SYSTEM_PROMPT = (
@@ -75,17 +74,6 @@ async def run_agent(
         AgentResult com o texto final e a lista de tool_calls, ou ok=False com
         uma mensagem de erro amigável (nunca levanta).
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
-        return AgentResult(
-            text="",
-            ok=False,
-            error=(
-                "ANTHROPIC_API_KEY não está definida. Configure a chave no .env "
-                "(ou no ambiente) para conversar com o assistente."
-            ),
-        )
-
     try:
         import anthropic
     except ImportError:
@@ -98,7 +86,10 @@ async def run_agent(
     tool_calls: list[dict[str, Any]] = []
 
     try:
-        client = anthropic.AsyncAnthropic(api_key=api_key)
+        # Seleção de provider em cascata: ANTHROPIC_API_KEY -> Bedrock (.aws).
+        bundle = build_client()
+        client = bundle.client
+        model = bundle.model
 
         async with connect_session() as session:
             mcp_tools = await list_tools(session)
@@ -109,7 +100,7 @@ async def run_agent(
 
             for _ in range(MAX_TURNS):
                 response = await client.messages.create(
-                    model=MODEL,
+                    model=model,
                     max_tokens=MAX_TOKENS,
                     system=SYSTEM_PROMPT,
                     messages=messages,
@@ -160,6 +151,8 @@ async def run_agent(
                 tool_calls=tool_calls,
             )
 
+    except ProviderUnavailable as exc:
+        return AgentResult(text="", ok=False, error=str(exc), tool_calls=tool_calls)
     except MCPConnectionError as exc:
         return AgentResult(text="", ok=False, error=str(exc), tool_calls=tool_calls)
     except anthropic.AnthropicError as exc:

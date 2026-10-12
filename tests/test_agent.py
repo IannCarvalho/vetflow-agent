@@ -17,16 +17,26 @@ from agent import AgentResult, _extract_text, run_agent
 
 
 # --------------------------------------------------------------------------- #
-# run_agent sem chave
+# run_agent sem nenhum provider disponível (nem chave, nem AWS)
 # --------------------------------------------------------------------------- #
-async def test_run_agent_sem_api_key_retorna_ok_false_sem_levantar(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+async def test_run_agent_sem_provider_retorna_ok_false_sem_levantar(monkeypatch):
+    # Força o cenário "nenhum provider": build_client levanta ProviderUnavailable.
+    import agent as agent_mod
+    from provider import ProviderUnavailable
+
+    def _boom():
+        raise ProviderUnavailable(
+            "Nenhuma credencial do Claude encontrada. Defina ANTHROPIC_API_KEY "
+            "no .env, ou configure um perfil AWS com acesso ao Amazon Bedrock."
+        )
+
+    monkeypatch.setattr(agent_mod, "build_client", _boom)
 
     result = await run_agent("oi")
 
     assert isinstance(result, AgentResult)
     assert result.ok is False
-    assert "ANTHROPIC_API_KEY" in (result.error or "")
+    assert "credencial do Claude" in (result.error or "")
 
 
 # --------------------------------------------------------------------------- #

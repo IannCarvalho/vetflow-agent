@@ -23,12 +23,9 @@ load_dotenv()
 import streamlit as st  # noqa: E402 - precisa vir após load_dotenv()
 
 from agent import run_agent  # noqa: E402 - idem
+from provider import describe_provider, provider_available  # noqa: E402 - idem
 
 st.set_page_config(page_title="Assistente VetFlow", page_icon="🐾", layout="centered")
-
-
-def _has_api_key() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
 
 
 def _render_sidebar() -> None:
@@ -36,10 +33,10 @@ def _render_sidebar() -> None:
     with st.sidebar:
         st.header("Configuração")
 
-        if _has_api_key():
-            st.success("ANTHROPIC_API_KEY: definida")
+        if provider_available():
+            st.success(f"Claude via: {describe_provider()}")
         else:
-            st.error("ANTHROPIC_API_KEY: ausente")
+            st.error("Nenhum provider do Claude configurado")
 
         base_url = os.environ.get("VETFLOW_BASE_URL", "(não definida)")
         email = os.environ.get("VETFLOW_EMAIL", "(não definido)")
@@ -93,17 +90,20 @@ def main() -> None:
             if msg.get("text"):
                 st.markdown(msg["text"])
 
-    api_ok = _has_api_key()
+    api_ok = provider_available()
     if not api_ok:
         st.warning(
-            "A ANTHROPIC_API_KEY não está configurada. Defina-a no arquivo `.env` "
-            "para habilitar o chat. A entrada está desabilitada até lá."
+            "Nenhum provider do Claude está configurado. Defina `ANTHROPIC_API_KEY` "
+            "no `.env`, ou configure um perfil AWS com acesso ao Amazon Bedrock "
+            "(`aws configure`). A entrada fica desabilitada até lá."
         )
 
-    prompt = st.chat_input(
-        "Pergunte algo sobre a clínica..." if api_ok else "Configure a ANTHROPIC_API_KEY para usar",
-        disabled=not api_ok,
+    placeholder_txt = (
+        "Pergunte algo sobre a clínica..."
+        if api_ok
+        else "Configure um provider do Claude para usar"
     )
+    prompt = st.chat_input(placeholder_txt, disabled=not api_ok)
 
     if not prompt:
         return

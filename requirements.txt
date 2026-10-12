@@ -3,6 +3,8 @@ streamlit>=1.37.0
 anthropic>=0.39.0
 mcp>=2.3.0
 python-dotenv>=1.0.0
+# Fallback para o Claude via Amazon Bedrock (resolve o perfil .aws default).
+boto3>=1.34.0
 
 # O servidor MCP consumido NÃO é listado aqui. Instale-o em modo editável no
 # mesmo venv (ver README):
