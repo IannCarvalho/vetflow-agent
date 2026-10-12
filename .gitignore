@@ -11,3 +11,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .streamlit/secrets.toml
+
+# build artifacts do pacote instalavel
+*.egg-info/
+src/*.egg-info/

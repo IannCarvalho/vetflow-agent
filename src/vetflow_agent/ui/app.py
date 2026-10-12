@@ -22,8 +22,8 @@ load_dotenv()
 
 import streamlit as st  # noqa: E402 - precisa vir após load_dotenv()
 
-from agent import run_agent  # noqa: E402 - idem
-from provider import describe_provider, provider_available  # noqa: E402 - idem
+from vetflow_agent.core.agent import run_agent  # noqa: E402 - idem
+from vetflow_agent.core.provider import describe_provider, provider_available  # noqa: E402 - idem
 
 st.set_page_config(page_title="Assistente VetFlow", page_icon="🐾", layout="centered")
 

@@ -18,8 +18,8 @@ pytestmark = pytest.mark.skipif(TestClient is None, reason="fastapi não instala
 
 def _client(monkeypatch, agent_result):
     """Monta um TestClient com run_agent/provider mockados."""
-    import agent as agent_mod
-    import api as api_mod
+    import vetflow_agent.api.api as api_mod
+    import vetflow_agent.core.agent as agent_mod
 
     async def fake_run_agent(
         message, history=None, on_tool_event=None, model=None, api_key=None, user_token=None
@@ -33,7 +33,7 @@ def _client(monkeypatch, agent_result):
 
 
 def test_health_ok(monkeypatch):
-    from agent import AgentResult
+    from vetflow_agent.core.agent import AgentResult
 
     client, _ = _client(monkeypatch, AgentResult(text="x"))
     r = client.get("/health")
@@ -43,7 +43,7 @@ def test_health_ok(monkeypatch):
 
 
 def test_providers_descreve_sem_segredos(monkeypatch):
-    from agent import AgentResult
+    from vetflow_agent.core.agent import AgentResult
 
     client, _ = _client(monkeypatch, AgentResult(text="x"))
     r = client.get("/providers")
@@ -53,7 +53,7 @@ def test_providers_descreve_sem_segredos(monkeypatch):
 
 
 def test_chat_ok_retorna_texto_e_tools(monkeypatch):
-    from agent import AgentResult
+    from vetflow_agent.core.agent import AgentResult
 
     result = AgentResult(
         text="3 clientes e 5 pets.",
@@ -71,7 +71,7 @@ def test_chat_ok_retorna_texto_e_tools(monkeypatch):
 
 
 def test_chat_erro_vem_em_ok_false(monkeypatch):
-    from agent import AgentResult
+    from vetflow_agent.core.agent import AgentResult
 
     result = AgentResult(text="", ok=False, error="Nenhum provider de LLM configurado.")
     client, _ = _client(monkeypatch, result)
@@ -83,7 +83,7 @@ def test_chat_erro_vem_em_ok_false(monkeypatch):
 
 
 def test_chat_mensagem_vazia_e_422(monkeypatch):
-    from agent import AgentResult
+    from vetflow_agent.core.agent import AgentResult
 
     client, _ = _client(monkeypatch, AgentResult(text="x"))
     r = client.post("/chat", json={"message": ""})
@@ -91,7 +91,7 @@ def test_chat_mensagem_vazia_e_422(monkeypatch):
 
 
 def test_is_chat_model_filtra_nao_chat():
-    import api as api_mod
+    import vetflow_agent.api.api as api_mod
 
     assert api_mod._is_chat_model("gemini/gemini-2.0-flash") is True
     assert api_mod._is_chat_model("gemini/gemini-embedding-001") is False
@@ -105,7 +105,7 @@ def test_providers_models_lista_filtrada(monkeypatch):
 
     from fastapi.testclient import TestClient
 
-    import api as api_mod
+    import vetflow_agent.api.api as api_mod
 
     litellm_stub = types.ModuleType("litellm")
     litellm_stub.get_valid_models = lambda **kw: [
@@ -127,7 +127,7 @@ def test_providers_models_lista_vazia_e_invalida(monkeypatch):
 
     from fastapi.testclient import TestClient
 
-    import api as api_mod
+    import vetflow_agent.api.api as api_mod
 
     litellm_stub = types.ModuleType("litellm")
     litellm_stub.get_valid_models = lambda **kw: []  # key inválida -> litellm devolve vazio
@@ -142,8 +142,8 @@ def test_providers_models_lista_vazia_e_invalida(monkeypatch):
 
 
 def test_chat_repassa_bearer_como_user_token(monkeypatch):
-    import api as api_mod
-    from agent import AgentResult
+    import vetflow_agent.api.api as api_mod
+    from vetflow_agent.core.agent import AgentResult
 
     captured = {}
 

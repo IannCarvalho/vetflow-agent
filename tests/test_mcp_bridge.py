@@ -18,7 +18,7 @@ try:  # pragma: no cover - caminho depende da versão do Python
 except NameError:  # pragma: no cover
     from exceptiongroup import ExceptionGroup  # type: ignore[no-redef]
 
-from mcp_bridge import (
+from vetflow_agent.core.mcp_bridge import (
     MCPConnectionError,
     _check_required_env,
     _flatten_tool_result,
@@ -194,7 +194,7 @@ def test_tool_to_openai_fallback_schema_quando_none():
 # --------------------------------------------------------------------------- #
 # Modo in-process (VETFLOW_MCP_INPROCESS) — consumo sem subprocesso.
 # --------------------------------------------------------------------------- #
-from mcp_bridge import _inprocess_enabled, _InProcessSession  # noqa: E402
+from vetflow_agent.core.mcp_bridge import _inprocess_enabled, _InProcessSession  # noqa: E402
 
 
 @pytest.mark.parametrize(
@@ -242,9 +242,9 @@ async def test_inprocess_session_list_tools_expoe_atributo_tools():
 
 async def test_inprocess_session_funciona_com_os_helpers_do_bridge():
     """A sessão in-process casa com list_tools/dispatch_tool/tools_to_openai do bridge."""
-    from mcp_bridge import dispatch_tool as _dispatch
-    from mcp_bridge import list_tools as _list
-    from mcp_bridge import tools_to_openai as _to_openai
+    from vetflow_agent.core.mcp_bridge import dispatch_tool as _dispatch
+    from vetflow_agent.core.mcp_bridge import list_tools as _list
+    from vetflow_agent.core.mcp_bridge import tools_to_openai as _to_openai
 
     server = _FakeInProcessServer()
     session = _InProcessSession(server)

@@ -24,9 +24,11 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-# Diretório deste app. Usado como cwd do subprocesso para que ele ache o .env
-# e o pacote vetflow_mcp instalado em modo editável no mesmo venv.
-APP_DIR = Path(__file__).resolve().parent
+# Raiz do projeto (onde fica o .env em dev). Usada como cwd do subprocesso MCP
+# para que ele ache o .env e o pacote vetflow_mcp instalado no mesmo venv.
+# Layout src: este módulo é src/vetflow_agent/core/mcp_bridge.py, então a raiz
+# está 3 níveis acima (core -> vetflow_agent -> src -> raiz do projeto).
+APP_DIR = Path(__file__).resolve().parents[3]
 
 
 class MCPConnectionError(RuntimeError):

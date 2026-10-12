@@ -35,8 +35,8 @@ from fastapi.concurrency import run_in_threadpool  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
-from agent import run_agent  # noqa: E402
-from provider import describe_provider, provider_available  # noqa: E402
+from vetflow_agent.core.agent import run_agent  # noqa: E402
+from vetflow_agent.core.provider import describe_provider, provider_available  # noqa: E402
 
 app = FastAPI(title="VetFlow Agent API", version="1.0.0")
 

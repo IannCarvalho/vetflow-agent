@@ -20,14 +20,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from mcp_bridge import (
+from .mcp_bridge import (
     MCPConnectionError,
     connect_session,
     dispatch_tool,
     list_tools,
     tools_to_openai,
 )
-from provider import ProviderUnavailable, select_model_with_overrides
+from .provider import ProviderUnavailable, select_model_with_overrides
 
 # Trava de segurança: no máximo 12 idas e voltas de tool-use por mensagem.
 MAX_TURNS = 12

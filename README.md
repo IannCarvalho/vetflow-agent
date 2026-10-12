@@ -9,13 +9,29 @@ responder ("quais vacinas vencem esse mês?", "quantos pets a Maria tem?").
 
 Expõe **duas interfaces**:
 
-- **API HTTP** (`api.py`, FastAPI) — consumida pelo widget de chat do
-  [`vetflow-frontend`](../vetflow-frontend). É o caminho "produto".
-- **UI Streamlit** (`app.py`) — um app de chat autocontido, útil para testes
-  rápidos sem o frontend.
+- **API HTTP** (`src/vetflow_agent/api/api.py`, FastAPI) — consumida pelo widget
+  de chat do [`vetflow-frontend`](../vetflow-frontend). É o caminho "produto".
+- **UI Streamlit** (`src/vetflow_agent/ui/app.py`) — um app de chat autocontido,
+  útil para testes rápidos sem o frontend.
 
 O modelo (Claude, GPT, Gemini ou Bedrock) é escolhido por configuração — ver
 *Multi-provider* abaixo.
+
+## Estrutura
+
+Pacote Python instalável, com **src layout** separando as três responsabilidades:
+
+```
+src/vetflow_agent/
+├── core/     # o cérebro: loop de tool-use, seleção de provider, ponte MCP
+│   ├── agent.py
+│   ├── provider.py
+│   └── mcp_bridge.py
+├── api/      # camada HTTP (FastAPI) — o caminho "produto"
+│   └── api.py
+└── ui/       # UI Streamlit alternativa (local)
+    └── app.py
+```
 
 > Este projeto **não modifica** o `vetflow-mcp`. Apenas o consome.
 
@@ -122,7 +138,7 @@ python -m venv .venv
 # Linux/macOS:
 # source .venv/bin/activate
 
-pip install -r requirements.txt
+pip install -e .                   # instala o vetflow-agent (src layout) + deps
 pip install -e ../vetflow-mcp      # instala o servidor MCP no mesmo venv
 
 cp .env.example .env               # (ou copie manualmente no Windows)
@@ -133,13 +149,13 @@ cp .env.example .env               # (ou copie manualmente no Windows)
 Rode a **API** (para o frontend consumir):
 
 ```bash
-uvicorn api:app --host 127.0.0.1 --port 8700
+uvicorn vetflow_agent.api.api:app --host 127.0.0.1 --port 8700
 ```
 
 Ou a **UI Streamlit** (teste rápido sem frontend):
 
 ```bash
-streamlit run app.py
+streamlit run src/vetflow_agent/ui/app.py
 ```
 
 ## Variáveis de ambiente

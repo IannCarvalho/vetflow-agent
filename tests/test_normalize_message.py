@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from agent import AssistantMessage, ToolCall, normalize_message
+from vetflow_agent.core.agent import AssistantMessage, ToolCall, normalize_message
 
 
 # --------------------------------------------------------------------------- #
