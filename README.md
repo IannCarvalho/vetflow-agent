@@ -172,6 +172,67 @@ Pontos do deploy:
 > Sem este deploy, o widget em produção mostra *"Não consegui falar com o
 > assistente (Network Error)"* — o front está no ar, mas a API do agente não.
 
+## Como o MCP é consumido: subprocesso vs. in-process
+
+Esta é a decisão de arquitetura mais importante do agente e vale entender o
+porquê, porque ela define o **perfil de memória** em produção.
+
+Hoje, cada `POST /chat` sobe o `vetflow-mcp` como **subprocesso stdio próprio**
+(`python -m vetflow_mcp.server`), fala com ele pelo `mcp_bridge.py`, e o fecha ao
+terminar. Ou seja: durante uma conversa com ferramentas, **dois interpretadores
+Python coexistem** — o do agente (FastAPI + LiteLLM) e o do MCP.
+
+### As duas abordagens
+
+| | **Subprocesso por request** (atual) | **In-process** (alternativa) |
+|---|---|---|
+| Como roda | o MCP é um processo separado, falado por stdio | o agente importa `vetflow_mcp` e chama `list_tools()`/`call_tool()` direto |
+| Isolamento | **total** — cada request tem seu processo e seu token; um crash do MCP não derruba a API | compartilhado — tudo roda no mesmo processo |
+| Multi-tenancy | **seguro por construção** — processos não compartilham estado, então o JWT de um usuário nunca vaza para outro | **exige cuidado** — o `server.py` do MCP usa um `_client` singleton global; in-process ingênuo reabriria o furo de multi-tenancy |
+| Memória | **pico alto** — dois Python residentes ao mesmo tempo (o segundo custa ~80MB) | **enxuto** — um só interpretador |
+| Latência | custo de subir o subprocesso a cada request | sem spawn; chamada de função direta |
+
+### Por que o subprocesso foi escolhido
+
+**Isolamento e segurança de multi-tenancy, de graça.** Como cada request tem seu
+próprio processo, o token (JWT) de um usuário fisicamente não pode vazar para a
+request de outro — não há estado compartilhado para vazar. Para um serviço que
+age com a identidade de quem está logado (ver *pass-through* na seção de deploy),
+essa garantia vale muito e sai sem escrever uma linha de código de isolamento.
+
+### O custo, e quando ele morde
+
+O preço é a **RAM de pico**: no plano free do Render (**512MB**), os dois
+interpretadores Python coexistindo durante uma chamada de ferramenta chegam
+perto do teto. Isso já causou **OOM-kill** (`502` com header
+`x-render-routing: no-deploy`, logs subindo → `Shutting down` sem traceback →
+reiniciar). Duas mudanças aliviaram o pico sem mexer na arquitetura:
+
+- **fail-fast de provider:** `run_agent` resolve o provider *antes* de importar
+  o LiteLLM e abrir o MCP — uma request sem provider não carrega os dois pesos à
+  toa;
+- **runtime enxuto:** o `streamlit` saiu do `requirements.txt` de deploy (ele
+  arrasta pandas/pyarrow/numpy/altair, que a API nunca importa) e foi para o
+  `requirements-dev.txt`.
+
+Com esses dois cortes o serviço roda **estável no free tier** e já respondeu um
+`POST /chat` real end-to-end (front → agente → MCP → backend). O subprocesso
+segue sendo a abordagem em produção.
+
+### O caminho de saída, se precisar escalar
+
+Se a carga crescer e a RAM de pico voltar a ser o gargalo, a cura real é mover o
+MCP para **in-process** — eliminando o segundo interpretador. O bloqueio é o
+`_client` singleton global do `server.py`; a solução acordada (**Opção A**) é usar
+`contextvars` para manter o client/token **por request**, preservando o
+isolamento de multi-tenancy sem subir um processo. É um PR no `vetflow-mcp` + uma
+troca no `mcp_bridge.py`. O modo subprocesso **permanece** de qualquer forma —
+ele é como o `vetflow-mcp` serve o Claude Desktop e outros clientes stdio.
+
+> **Resumo:** subprocesso = mais RAM, isolamento grátis, em produção hoje.
+> In-process = enxuto, exige `contextvars` para não reabrir o furo de
+> multi-tenancy, reservado para quando a escala exigir.
+
 ## Degradação graciosa (sem backend / sem chave)
 
 O app foi feito para **não quebrar** quando falta configuração:
