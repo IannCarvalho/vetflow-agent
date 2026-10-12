@@ -265,25 +265,6 @@ async def list_tools(session: ClientSession) -> list[Any]:
     return list(result.tools)
 
 
-def tool_to_anthropic(tool: Any) -> dict[str, Any]:
-    """Converte uma Tool MCP para o dict de ferramenta da Anthropic.
-
-    A Anthropic espera {"name", "description", "input_schema"}. No SDK mcp 2.x o
-    schema vem no atributo `tool.input_schema`.
-    """
-    schema = getattr(tool, "input_schema", None) or {"type": "object", "properties": {}}
-    return {
-        "name": tool.name,
-        "description": (tool.description or "").strip(),
-        "input_schema": schema,
-    }
-
-
-def tools_to_anthropic(tools: list[Any]) -> list[dict[str, Any]]:
-    """Converte uma lista de Tools MCP para o formato da Anthropic."""
-    return [tool_to_anthropic(t) for t in tools]
-
-
 def tool_to_openai(tool: Any) -> dict[str, Any]:
     """Converte uma Tool MCP para o formato de function-calling da OpenAI.
 
