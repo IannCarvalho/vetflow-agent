@@ -1,5 +1,7 @@
-# Dependências de runtime do vetflow-agent.
-streamlit>=1.37.0
+# Dependências de runtime da API do vetflow-agent (o que o DEPLOY instala).
+# A UI Streamlit (app.py) é opcional e local — suas dependências ficam em
+# requirements-dev.txt para NÃO entrarem no servidor (streamlit arrasta
+# pandas/pyarrow/numpy/altair, dezenas de MB de RAM que a API não usa).
 # LiteLLM: uma interface (formato OpenAI) sobre Claude, GPT, Gemini, Bedrock...
 litellm>=1.50.0
 # SDKs/credenciais que o LiteLLM usa por baixo conforme o provider escolhido.
