@@ -146,6 +146,30 @@ As credenciais de LLM podem vir do ambiente (acima) **ou** por request (BYOK, o
 widget manda a key do usuário). Todas são carregadas no topo do `app.py`/`api.py`
 antes de importar o agente, para chegarem também ao subprocesso MCP.
 
+## Deploy (Render)
+
+Há um blueprint em [`render.yaml`](./render.yaml) para publicar a API no
+[Render](https://render.com). No Render: **New → Blueprint**, aponte para este
+repositório, e preencha no painel as variáveis `sync:false`.
+
+Pontos do deploy:
+
+- **BYOK-only:** o servidor **não** carrega nenhuma chave de LLM. Quem usar o
+  chat traz a própria key (enviada por request, guardada no navegador). Assim o
+  deploy não tem custo de LLM nem guarda credenciais de terceiros.
+- **`vetflow-mcp` via GitHub:** o build instala o MCP direto do repositório
+  (`pip install git+https://github.com/IannCarvalho/vetflow-mcp.git`), já que o
+  `../vetflow-mcp` local não existe no Render. Requer o repo do MCP acessível
+  (público, ou com token de deploy).
+- **Variáveis a preencher:** `VETFLOW_EMAIL`, `VETFLOW_PASSWORD` (login do vet
+  que o MCP usa) e `CORS_ORIGINS` (a URL do frontend no Vercel). `VETFLOW_BASE_URL`
+  já aponta para o backend de produção no blueprint.
+- **Frontend:** defina `VITE_AGENT_API_URL` (no Vercel) com a URL pública da API
+  do agente no Render, para o widget encontrá-la em produção.
+
+> Sem este deploy, o widget em produção mostra *"Não consegui falar com o
+> assistente (Network Error)"* — o front está no ar, mas a API do agente não.
+
 ## Degradação graciosa (sem backend / sem chave)
 
 O app foi feito para **não quebrar** quando falta configuração:

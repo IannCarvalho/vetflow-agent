@@ -1,0 +1,38 @@
+# Blueprint de deploy do vetflow-agent no Render.
+#
+# Modelo BYOK-only: NENHUMA credencial de LLM fica no servidor. Quem quiser usar
+# o chat traz a própria API key (guardada no navegador, enviada no POST /chat).
+# O servidor só precisa saber falar com o backend VetFlow (para as ferramentas
+# do MCP) e com o frontend (CORS).
+#
+# O vetflow-mcp é instalado a partir do GitHub (público) no build — não há
+# `../vetflow-mcp` no Render, então a dependência vem do repositório.
+#
+# Como usar: no Render, New > Blueprint, aponte para este repositório. Depois
+# preencha no painel as variáveis marcadas como sync:false (não versionadas).
+
+services:
+  - type: web
+    name: vetflow-agent
+    runtime: python
+    plan: free
+    buildCommand: |
+      pip install -r requirements.txt
+      pip install "git+https://github.com/IannCarvalho/vetflow-mcp.git"
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      # Backend VetFlow de produção (as ferramentas do MCP falam com ele).
+      - key: VETFLOW_BASE_URL
+        value: https://vetflow-backend-jn55.onrender.com
+      # Credenciais do backend que o MCP usa (login do vet). NÃO versionadas —
+      # preencha no painel do Render.
+      - key: VETFLOW_EMAIL
+        sync: false
+      - key: VETFLOW_PASSWORD
+        sync: false
+      # Origem do frontend permitida no CORS (ajuste para a URL do seu Vercel).
+      - key: CORS_ORIGINS
+        sync: false
+      # BYOK-only: nenhuma ANTHROPIC/OPENAI/GEMINI/AWS key aqui de propósito.
+      # O provider vem por request (a key do usuário, no navegador dele).
