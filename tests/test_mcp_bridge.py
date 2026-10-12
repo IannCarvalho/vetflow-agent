@@ -25,9 +25,7 @@ from mcp_bridge import (
     _friendly_detail,
     _unwrap_exception,
     dispatch_tool,
-    tool_to_anthropic,
     tool_to_openai,
-    tools_to_anthropic,
 )
 
 
@@ -92,52 +90,6 @@ def test_check_required_env_com_as_tres_nao_levanta(monkeypatch):
 
     # Não deve levantar.
     assert _check_required_env() is None
-
-
-# --------------------------------------------------------------------------- #
-# tool_to_anthropic / tools_to_anthropic
-# --------------------------------------------------------------------------- #
-def test_tool_to_anthropic_chaves_exatas_e_description_strip():
-    tool = SimpleNamespace(
-        name="metricas_dashboard",
-        description="  conta coisas  ",
-        input_schema={"type": "object", "properties": {"x": {"type": "string"}}},
-    )
-
-    result = tool_to_anthropic(tool)
-
-    assert set(result.keys()) == {"name", "description", "input_schema"}
-    assert result["name"] == "metricas_dashboard"
-    assert result["description"] == "conta coisas"
-    assert result["input_schema"] == {
-        "type": "object",
-        "properties": {"x": {"type": "string"}},
-    }
-
-
-def test_tool_to_anthropic_input_schema_none_usa_fallback():
-    tool = SimpleNamespace(name="t", description="d", input_schema=None)
-    result = tool_to_anthropic(tool)
-    assert result["input_schema"] == {"type": "object", "properties": {}}
-
-
-def test_tool_to_anthropic_description_none_vira_string_vazia():
-    tool = SimpleNamespace(name="t", description=None, input_schema={})
-    result = tool_to_anthropic(tool)
-    assert result["description"] == ""
-
-
-def test_tools_to_anthropic_converte_lista():
-    tools = [
-        SimpleNamespace(name="a", description="da", input_schema={"type": "object"}),
-        SimpleNamespace(name="b", description=None, input_schema=None),
-    ]
-
-    result = tools_to_anthropic(tools)
-
-    assert [t["name"] for t in result] == ["a", "b"]
-    assert result[0]["input_schema"] == {"type": "object"}
-    assert result[1]["input_schema"] == {"type": "object", "properties": {}}
 
 
 # --------------------------------------------------------------------------- #
