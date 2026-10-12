@@ -32,11 +32,10 @@ services:
       # Origem do frontend permitida no CORS (a URL do seu Vercel). Obrigatória.
       - key: CORS_ORIGINS
         sync: false
-      # OPCIONAIS — só como fallback (conta de serviço) quando a requisição não
-      # trouxer o JWT do usuário. No fluxo normal (pass-through) ficam vazias.
-      - key: VETFLOW_EMAIL
-        sync: false
-      - key: VETFLOW_PASSWORD
-        sync: false
       # BYOK para o LLM: nenhuma ANTHROPIC/OPENAI/GEMINI/AWS key aqui de propósito.
       # O provider/modelo vêm por request (a key do usuário, no navegador dele).
+      #
+      # VETFLOW_EMAIL/PASSWORD NÃO ficam aqui: no agente deployado a auth é
+      # sempre pass-through (o JWT do usuário logado chega pelo header do /chat).
+      # O modo email/senha segue existindo no vetflow-mcp, para clientes sem
+      # usuário logado (ex.: Claude Desktop) — mas não é usado neste serviço.
