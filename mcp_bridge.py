@@ -40,22 +40,21 @@ class MCPConnectionError(RuntimeError):
         self.detail = detail
 
 
-# Variáveis que o vetflow-mcp exige para autenticar no backend. Espelhamos a
-# lista aqui para falhar cedo e com clareza (o server valida as mesmas em
-# Settings.from_env). Isto NÃO modifica o vetflow-mcp -- só lê o ambiente que o
-# app já carregou e que seria repassado ao filho.
-_REQUIRED_VETFLOW_VARS = ("VETFLOW_BASE_URL", "VETFLOW_EMAIL", "VETFLOW_PASSWORD")
-
-
-def _check_required_env() -> None:
+def _check_required_env(user_token: str | None = None) -> None:
     """Levanta MCPConnectionError amigável se faltar credencial obrigatória.
 
-    Determinístico e independente de plataforma: no Windows, `python -m` nem
-    sempre propaga o SystemExit do filho de forma confiável quando o stdin é
-    fechado cedo, então a descoberta de tools pode "conectar" sem credenciais.
-    Esta checagem garante a mensagem amigável antes de subir o subprocesso.
+    Pass-through: se um `user_token` (JWT do usuário logado) for fornecido, ou
+    `VETFLOW_TOKEN` estiver no ambiente, então email/senha são opcionais —
+    basta a base_url. Senão, exige email+senha (modo conta de serviço).
     """
-    missing = [v for v in _REQUIRED_VETFLOW_VARS if not os.environ.get(v, "").strip()]
+    has_token = bool((user_token or "").strip() or os.environ.get("VETFLOW_TOKEN", "").strip())
+    missing: list[str] = []
+    if not os.environ.get("VETFLOW_BASE_URL", "").strip():
+        missing.append("VETFLOW_BASE_URL")
+    if not has_token:
+        for v in ("VETFLOW_EMAIL", "VETFLOW_PASSWORD"):
+            if not os.environ.get(v, "").strip():
+                missing.append(v)
     if missing:
         detail = "Variáveis de ambiente obrigatórias ausentes: " + ", ".join(missing)
         raise MCPConnectionError(
@@ -65,18 +64,22 @@ def _check_required_env() -> None:
         )
 
 
-def _server_params() -> StdioServerParameters:
+def _server_params(user_token: str | None = None) -> StdioServerParameters:
     """Parâmetros para lançar o `vetflow-mcp` como subprocesso stdio.
 
     Repassa uma CÓPIA do ambiente atual para que as VETFLOW_* (carregadas pelo
-    app via load_dotenv) cheguem ao filho. O stderr do filho é redirecionado
-    pelo `stdio_client` via seu parâmetro `errlog` (ver connect_session), que
-    precisa de um arquivo com fileno real.
+    app via load_dotenv) cheguem ao filho. Se `user_token` for fornecido (JWT do
+    usuário logado), injeta `VETFLOW_TOKEN` no env do filho — o MCP então age
+    como esse usuário (pass-through), em vez de logar com uma conta de serviço.
+    O stderr do filho é redirecionado pelo `stdio_client` via `errlog`.
     """
+    child_env = dict(os.environ)  # cópia; inclui as VETFLOW_* já no ambiente
+    if (user_token or "").strip():
+        child_env["VETFLOW_TOKEN"] = user_token.strip()
     return StdioServerParameters(
         command=sys.executable,
         args=["-m", "vetflow_mcp.server"],
-        env=dict(os.environ),  # cópia; inclui as VETFLOW_* já no ambiente
+        env=child_env,
         cwd=str(APP_DIR),
     )
 
@@ -119,7 +122,7 @@ def _friendly_detail(leaf: BaseException, stderr_text: str) -> str:
 
 
 @asynccontextmanager
-async def connect_session():
+async def connect_session(user_token: str | None = None):
     """Context manager assíncrono que cede uma ClientSession inicializada.
 
     Uso:
@@ -134,13 +137,13 @@ async def connect_session():
     """
     # Falha cedo e amigável se faltar credencial obrigatória (determinístico,
     # independente do comportamento do `-m` no Windows).
-    _check_required_env()
+    _check_required_env(user_token)
 
     # Arquivo temporário real para o stderr do filho (precisa de fileno).
     errlog = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
     try:
         try:
-            async with stdio_client(_server_params(), errlog=errlog) as (read, write):
+            async with stdio_client(_server_params(user_token), errlog=errlog) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     yield session

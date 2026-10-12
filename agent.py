@@ -85,11 +85,14 @@ async def run_agent(
     on_tool_event: Callable[[str, dict[str, Any]], None] | None = None,
     model: str | None = None,
     api_key: str | None = None,
+    user_token: str | None = None,
 ) -> AgentResult:
     """Roda uma rodada do agente para `user_message` (nunca levanta).
 
     `model`/`api_key` são o caminho BYOK: quando vêm do request (chave do
     navegador do usuário), são usados só nesta chamada e NUNCA persistidos.
+    `user_token` é o JWT do usuário logado (pass-through): repassado ao MCP para
+    que ele aja como esse usuário, em vez de uma conta de serviço.
     """
     try:
         import litellm
@@ -108,7 +111,7 @@ async def run_agent(
         # Chave BYOK (se veio no request) é passada ao litellm só nesta chamada.
         byok_key = (api_key or "").strip() or None
 
-        async with connect_session() as session:
+        async with connect_session(user_token=user_token) as session:
             mcp_tools = await list_tools(session)
             openai_tools = tools_to_openai(mcp_tools)
 
