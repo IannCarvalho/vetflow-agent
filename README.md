@@ -163,9 +163,9 @@ Pontos do deploy:
   submodules com a credencial da sua integração GitHub, então **funciona mesmo
   com o `vetflow-mcp` privado**. Ao clonar para dev local, use
   `git clone --recursive` (ou `git submodule update --init`).
-- **Variáveis a preencher:** `VETFLOW_EMAIL`, `VETFLOW_PASSWORD` (login do vet
-  que o MCP usa) e `CORS_ORIGINS` (a URL do frontend no Vercel). `VETFLOW_BASE_URL`
-  já aponta para o backend de produção no blueprint.
+- **Variáveis a preencher:** apenas `CORS_ORIGINS` (a URL do frontend no Vercel).
+  `VETFLOW_BASE_URL` já vem no blueprint. **Não há `VETFLOW_EMAIL/PASSWORD`**: a
+  auth é pass-through (o JWT do usuário logado chega pelo header do `/chat`).
 - **Frontend:** defina `VITE_AGENT_API_URL` (no Vercel) com a URL pública da API
   do agente no Render, para o widget encontrá-la em produção.
 
