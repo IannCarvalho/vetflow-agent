@@ -12,8 +12,6 @@ import sys
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
-import pytest
-
 import agent
 from agent import AgentResult, _extract_text, run_agent
 
