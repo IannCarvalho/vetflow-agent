@@ -7,6 +7,9 @@ anthropic>=0.39.0        # provider Anthropic (API direta)
 boto3>=1.34.0            # provider Bedrock (resolve o perfil .aws default)
 mcp>=2.3.0
 python-dotenv>=1.0.0
+# API HTTP para o frontend do VetFlow consumir o agente.
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
 
 # O servidor MCP consumido NÃO é listado aqui. Instale-o em modo editável no
 # mesmo venv (ver README):  pip install -e ../vetflow-mcp
