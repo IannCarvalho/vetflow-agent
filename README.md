@@ -95,6 +95,21 @@ interpretador** do app (`sys.executable`) e encontra o pacote `vetflow_mcp`.
 Nada é duplicado: você edita o MCP no seu próprio repositório e o agente passa a
 enxergar as mudanças na próxima execução.
 
+### Por que o `vetflow-mcp` é um projeto separado (e não código deste repo)
+
+O agente é o principal consumidor do MCP, então é natural perguntar se o MCP não
+deveria morar *dentro* dele. Não deveria: o `vetflow-mcp` é um **servidor** MCP e
+este agente é apenas **um cliente** entre vários — Claude Desktop e outros
+clientes MCP usam aquele servidor **sem este agente existir**. Fundir os dois
+mataria a reutilização que é a razão de ser do MCP (cada cliente teria que
+reimplementar o acoplamento com o backend).
+
+Por isso o agente **consome** o MCP sem fundir código: em dev via `pip install -e
+../vetflow-mcp`, no deploy via git **submodule** (`vendor/vetflow-mcp`, build
+autocontido). O custo de ter dois *processos* em runtime (o subprocesso stdio)
+não se paga fundindo repositórios e sim movendo o MCP para **in-process** quando a
+escala exigir — ver *"Como o MCP é consumido: subprocesso vs. in-process"* abaixo.
+
 ## Setup
 
 Requer **Python >= 3.10** (ideal 3.12).
