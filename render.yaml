@@ -1,17 +1,19 @@
 # Blueprint de deploy do vetflow-agent no Render.
 #
-# Modelo BYOK-only: NENHUMA credencial de LLM fica no servidor. Quem quiser usar
-# o chat traz a própria API key (guardada no navegador, enviada no POST /chat).
-# O servidor só precisa saber falar com o backend VetFlow (para as ferramentas
-# do MCP) e com o frontend (CORS).
+# Autenticação por PASS-THROUGH: o chat age como o USUÁRIO LOGADO. O frontend
+# envia o JWT do usuário no header Authorization do POST /chat; o agente o
+# repassa ao MCP (VETFLOW_TOKEN). Portanto o servidor NÃO precisa de uma conta
+# de serviço — VETFLOW_EMAIL/PASSWORD são apenas fallback opcional.
 #
-# O vetflow-mcp vem como git SUBMODULE em vendor/vetflow-mcp — mantém o MCP como
-# repositório separado, mas o build fica autocontido (sem clone externo anônimo).
-# O Render clona submodules com a credencial da sua integração GitHub, então
-# funciona mesmo com o vetflow-mcp PRIVADO (ao contrário de `pip install git+`).
+# Modelo BYOK para o LLM: nenhuma credencial de LLM fica no servidor. Quem usa o
+# chat traz a própria API key (no navegador, enviada no POST /chat).
+#
+# O vetflow-mcp vem como git SUBMODULE em vendor/vetflow-mcp — build autocontido
+# (sem clone externo anônimo). O Render clona submodules com a credencial da sua
+# integração GitHub, então funciona mesmo com o vetflow-mcp PRIVADO.
 #
 # Como usar: no Render, New > Blueprint, aponte para este repositório. Depois
-# preencha no painel as variáveis marcadas como sync:false (não versionadas).
+# preencha no painel as variáveis marcadas como sync:false.
 
 services:
   - type: web
@@ -27,14 +29,14 @@ services:
       # Backend VetFlow de produção (as ferramentas do MCP falam com ele).
       - key: VETFLOW_BASE_URL
         value: https://vetflow-backend-jn55.onrender.com
-      # Credenciais do backend que o MCP usa (login do vet). NÃO versionadas —
-      # preencha no painel do Render.
+      # Origem do frontend permitida no CORS (a URL do seu Vercel). Obrigatória.
+      - key: CORS_ORIGINS
+        sync: false
+      # OPCIONAIS — só como fallback (conta de serviço) quando a requisição não
+      # trouxer o JWT do usuário. No fluxo normal (pass-through) ficam vazias.
       - key: VETFLOW_EMAIL
         sync: false
       - key: VETFLOW_PASSWORD
         sync: false
-      # Origem do frontend permitida no CORS (ajuste para a URL do seu Vercel).
-      - key: CORS_ORIGINS
-        sync: false
-      # BYOK-only: nenhuma ANTHROPIC/OPENAI/GEMINI/AWS key aqui de propósito.
-      # O provider vem por request (a key do usuário, no navegador dele).
+      # BYOK para o LLM: nenhuma ANTHROPIC/OPENAI/GEMINI/AWS key aqui de propósito.
+      # O provider/modelo vêm por request (a key do usuário, no navegador dele).
