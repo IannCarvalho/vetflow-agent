@@ -96,6 +96,30 @@ def _credential_ok_for(provider: str) -> bool:
     }.get(provider, lambda: False)()
 
 
+def select_model_with_overrides(
+    model: str | None = None, api_key: str | None = None
+) -> ModelSelection:
+    """Resolve o modelo quando o REQUEST traz BYOK (chave do próprio usuário).
+
+    - Se `model` + `api_key` vierem, usa-os direto (não consulta o ambiente): é
+      o caminho BYOK, onde a chave vive no navegador do usuário e chega por
+      request. A chave NÃO é guardada aqui -- quem a aplica é o agent.run_agent,
+      passando-a ao litellm só naquela chamada.
+    - Caso contrário, cai para a cascata baseada no ambiente (select_model).
+    """
+    m = (model or "").strip()
+    k = (api_key or "").strip()
+    if m and k:
+        return ModelSelection(model=m, provider=_provider_of_model(m))
+    if m and not k:
+        # Modelo explícito do usuário, mas sem key no request: só é válido se o
+        # ambiente tiver credencial para aquele provider (ex.: Bedrock via .aws).
+        provider = _provider_of_model(m)
+        if _credential_ok_for(provider):
+            return ModelSelection(model=m, provider=provider)
+    return select_model()
+
+
 def select_model() -> ModelSelection:
     """Resolve o modelo a usar seguindo a cascata. Levanta ProviderUnavailable."""
     explicit = os.environ.get("LLM_MODEL", "").strip()

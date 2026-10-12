@@ -27,7 +27,7 @@ from mcp_bridge import (
     list_tools,
     tools_to_openai,
 )
-from provider import ProviderUnavailable, select_model
+from provider import ProviderUnavailable, select_model_with_overrides
 
 # Trava de segurança: no máximo 12 idas e voltas de tool-use por mensagem.
 MAX_TURNS = 12
@@ -83,8 +83,14 @@ async def run_agent(
     user_message: str,
     history: list[dict[str, Any]] | None = None,
     on_tool_event: Callable[[str, dict[str, Any]], None] | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
 ) -> AgentResult:
-    """Roda uma rodada do agente para `user_message` (nunca levanta)."""
+    """Roda uma rodada do agente para `user_message` (nunca levanta).
+
+    `model`/`api_key` são o caminho BYOK: quando vêm do request (chave do
+    navegador do usuário), são usados só nesta chamada e NUNCA persistidos.
+    """
     try:
         import litellm
     except ImportError:
@@ -97,8 +103,10 @@ async def run_agent(
     tool_calls: list[dict[str, Any]] = []
 
     try:
-        selection = select_model()
-        model = selection.model
+        selection = select_model_with_overrides(model=model, api_key=api_key)
+        chosen_model = selection.model
+        # Chave BYOK (se veio no request) é passada ao litellm só nesta chamada.
+        byok_key = (api_key or "").strip() or None
 
         async with connect_session() as session:
             mcp_tools = await list_tools(session)
@@ -109,12 +117,15 @@ async def run_agent(
             messages.append({"role": "user", "content": user_message})
 
             for _ in range(MAX_TURNS):
-                response = await litellm.acompletion(
-                    model=model,
-                    messages=messages,
-                    tools=openai_tools,
-                    max_tokens=MAX_TOKENS,
-                )
+                completion_kwargs: dict[str, Any] = {
+                    "model": chosen_model,
+                    "messages": messages,
+                    "tools": openai_tools,
+                    "max_tokens": MAX_TOKENS,
+                }
+                if byok_key:
+                    completion_kwargs["api_key"] = byok_key
+                response = await litellm.acompletion(**completion_kwargs)
                 message = response.choices[0].message
                 requested = _get_tool_calls(message)
 

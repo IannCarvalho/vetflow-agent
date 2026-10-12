@@ -31,6 +31,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI  # noqa: E402 - após load_dotenv
+from fastapi.concurrency import run_in_threadpool  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
@@ -53,13 +54,20 @@ app.add_middleware(
 
 
 class ChatRequest(BaseModel):
-    """Corpo do POST /chat."""
+    """Corpo do POST /chat.
+
+    `model`/`api_key` são BYOK (bring your own key): a chave vive no navegador
+    do usuário e chega por request. NUNCA é persistida nem logada pelo servidor;
+    é usada só para a chamada ao LLM e descartada.
+    """
 
     message: str = Field(..., min_length=1, description="Mensagem do usuário.")
     history: list[dict] = Field(
         default_factory=list,
         description="Histórico no formato OpenAI (role/content), opcional.",
     )
+    model: str | None = Field(default=None, description="Modelo LiteLLM (BYOK), opcional.")
+    api_key: str | None = Field(default=None, description="API key do usuário (BYOK), opcional.")
 
 
 class ToolCall(BaseModel):
@@ -86,10 +94,92 @@ async def providers() -> dict:
     return {"available": provider_available(), "provider": describe_provider()}
 
 
+class ModelsRequest(BaseModel):
+    """Corpo do POST /providers/models (BYOK -- key usada só para listar)."""
+
+    provider: str = Field(..., description="openai | anthropic | gemini")
+    api_key: str = Field(..., min_length=1, description="API key do usuário (não persistida).")
+
+
+# Famílias/padrões de modelos que NÃO são chat (não servem para o loop de tools):
+# embeddings, geração de imagem/vídeo/áudio, TTS, moderação, AQA, etc.
+_NON_CHAT_PATTERNS = (
+    "embed",
+    "embedding",
+    "aqa",
+    "image",
+    "imagen",
+    "vision-only",
+    "tts",
+    "audio",
+    "whisper",
+    "moderation",
+    "veo",
+    "dall-e",
+    "text-embedding",
+    "gemini-embedding",
+    "learnlm",  # experimental, sem suporte consistente a tools
+)
+
+
+def _is_chat_model(model: str) -> bool:
+    """True se o modelo aparenta suportar chat multiturn (heurística por nome)."""
+    low = model.lower()
+    return not any(p in low for p in _NON_CHAT_PATTERNS)
+
+
+@app.post("/providers/models")
+async def list_models(req: ModelsRequest) -> dict:
+    """Lista os modelos REAIS que a key do usuário pode usar (custo zero).
+
+    Usa litellm.get_valid_models(check_provider_endpoint=True), que chama a API
+    de listagem do provider -- não gera tokens. A key vem no request (BYOK), é
+    usada só para esta chamada e NÃO é persistida nem logada.
+    """
+    try:
+        import litellm
+    except ImportError:
+        return {"ok": False, "models": [], "error": "litellm não instalado."}
+
+    try:
+        models = await run_in_threadpool(
+            litellm.get_valid_models,
+            check_provider_endpoint=True,
+            custom_llm_provider=req.provider,
+            api_key=req.api_key,
+        )
+        # Normaliza para o formato LiteLLM que o /chat espera (ex.: gemini/<id>).
+        prefix = "gemini/" if req.provider == "gemini" else ""
+        norm = []
+        for m in models or []:
+            name = m.split("/", 1)[-1] if "/" in m else m
+            norm.append(f"{prefix}{name}" if prefix and not m.startswith(prefix) else m)
+        # Mantém só modelos de CHAT (multiturn + tools). O endpoint de listagem
+        # devolve também embeddings/imagem/tts/aqa, que quebram o /chat com
+        # "Multiturn chat is not enabled" -- então filtramos por nome.
+        norm = [m for m in norm if _is_chat_model(m)]
+        # Dedup preservando ordem.
+        seen: set[str] = set()
+        unique = [x for x in norm if not (x in seen or seen.add(x))]
+        if not unique:
+            # get_valid_models engole erro de auth e devolve lista vazia; para o
+            # usuário, lista vazia == key inválida ou sem acesso a modelos.
+            return {
+                "ok": False,
+                "models": [],
+                "error": "Chave inválida ou sem modelos disponíveis para este provedor.",
+            }
+        return {"ok": True, "models": unique, "error": None}
+    except Exception as exc:  # noqa: BLE001 - erro de listagem vira resposta amigável
+        return {"ok": False, "models": [], "error": f"{type(exc).__name__}: {exc}"}
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest) -> ChatResponse:
     """Roda uma rodada do agente. Nunca levanta: erros vêm em ok=False/error."""
-    result = await run_agent(req.message, history=req.history)
+    result = await run_agent(
+        req.message, history=req.history, model=req.model, api_key=req.api_key
+    )
     tool_calls = [
         ToolCall(name=c["name"], arguments=c.get("arguments") or {})
         for c in result.tool_calls
