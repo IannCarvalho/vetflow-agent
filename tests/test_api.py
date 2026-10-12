@@ -21,7 +21,7 @@ def _client(monkeypatch, agent_result):
     import agent as agent_mod
     import api as api_mod
 
-    async def fake_run_agent(message, history=None, on_tool_event=None):
+    async def fake_run_agent(message, history=None, on_tool_event=None, model=None, api_key=None):
         return agent_result
 
     monkeypatch.setattr(api_mod, "run_agent", fake_run_agent)
@@ -86,3 +86,54 @@ def test_chat_mensagem_vazia_e_422(monkeypatch):
     client, _ = _client(monkeypatch, AgentResult(text="x"))
     r = client.post("/chat", json={"message": ""})
     assert r.status_code == 422  # validação do Pydantic (min_length=1)
+
+
+def test_is_chat_model_filtra_nao_chat():
+    import api as api_mod
+
+    assert api_mod._is_chat_model("gemini/gemini-2.0-flash") is True
+    assert api_mod._is_chat_model("gemini/gemini-embedding-001") is False
+    assert api_mod._is_chat_model("text-embedding-3-large") is False
+    assert api_mod._is_chat_model("gpt-4o") is True
+
+
+def test_providers_models_lista_filtrada(monkeypatch):
+    import sys
+    import types
+
+    from fastapi.testclient import TestClient
+
+    import api as api_mod
+
+    litellm_stub = types.ModuleType("litellm")
+    litellm_stub.get_valid_models = lambda **kw: [
+        "gemini/gemini-2.0-flash",
+        "gemini/gemini-embedding-001",  # deve ser filtrado
+    ]
+    monkeypatch.setitem(sys.modules, "litellm", litellm_stub)
+
+    client = TestClient(api_mod.app)
+    r = client.post("/providers/models", json={"provider": "gemini", "api_key": "x"})
+    body = r.json()
+    assert body["ok"] is True
+    assert body["models"] == ["gemini/gemini-2.0-flash"]  # embedding removido
+
+
+def test_providers_models_lista_vazia_e_invalida(monkeypatch):
+    import sys
+    import types
+
+    from fastapi.testclient import TestClient
+
+    import api as api_mod
+
+    litellm_stub = types.ModuleType("litellm")
+    litellm_stub.get_valid_models = lambda **kw: []  # key inválida -> litellm devolve vazio
+    monkeypatch.setitem(sys.modules, "litellm", litellm_stub)
+
+    client = TestClient(api_mod.app)
+    r = client.post("/providers/models", json={"provider": "gemini", "api_key": "bogus"})
+    body = r.json()
+    assert body["ok"] is False
+    assert body["models"] == []
+    assert body["error"]

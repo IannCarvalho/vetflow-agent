@@ -69,10 +69,10 @@ async def test_run_agent_sem_provider_retorna_ok_false_sem_levantar(monkeypatch)
     # Garante um litellm importável (não deve nem chegar a usá-lo).
     _install_litellm_stub(monkeypatch, [])
 
-    def _boom():
+    def _boom(model=None, api_key=None):
         raise ProviderUnavailable("Nenhum provider de LLM configurado.")
 
-    monkeypatch.setattr(agent, "select_model", _boom)
+    monkeypatch.setattr(agent, "select_model_with_overrides", _boom)
 
     result = await run_agent("oi")
 
@@ -92,9 +92,10 @@ async def test_run_agent_loop_tool_use_mockado(monkeypatch):
     ]
     _install_litellm_stub(monkeypatch, responses)
 
-    monkeypatch.setattr(
-        agent, "select_model", lambda: SimpleNamespace(model="gpt-4o", provider="openai")
-    )
+    def _sel(model=None, api_key=None):
+        return SimpleNamespace(model="gpt-4o", provider="openai")
+
+    monkeypatch.setattr(agent, "select_model_with_overrides", _sel)
 
     fake_session = SimpleNamespace()
 
@@ -131,9 +132,10 @@ async def test_run_agent_parsa_argumentos_json(monkeypatch):
         _msg(content="pronto"),
     ]
     _install_litellm_stub(monkeypatch, responses)
-    monkeypatch.setattr(
-        agent, "select_model", lambda: SimpleNamespace(model="gpt-4o", provider="openai")
-    )
+    def _sel(model=None, api_key=None):
+        return SimpleNamespace(model="gpt-4o", provider="openai")
+
+    monkeypatch.setattr(agent, "select_model_with_overrides", _sel)
 
     fake_session = SimpleNamespace()
 
