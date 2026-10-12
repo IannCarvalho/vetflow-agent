@@ -237,3 +237,75 @@ def test_tool_to_openai_fallback_schema_quando_none():
     tool = SimpleNamespace(name="x", description="d", input_schema=None)
     out = tool_to_openai(tool)
     assert out["function"]["parameters"] == {"type": "object", "properties": {}}
+
+
+# --------------------------------------------------------------------------- #
+# Modo in-process (VETFLOW_MCP_INPROCESS) — consumo sem subprocesso.
+# --------------------------------------------------------------------------- #
+from mcp_bridge import _inprocess_enabled, _InProcessSession  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [("1", True), ("true", True), ("TRUE", True), ("yes", True), ("on", True),
+     ("", False), ("0", False), ("false", False), ("off", False)],
+)
+def test_inprocess_enabled_le_o_flag(monkeypatch, value, expected):
+    monkeypatch.setenv("VETFLOW_MCP_INPROCESS", value)
+    assert _inprocess_enabled() is expected
+
+
+def test_inprocess_enabled_ausente_e_false(monkeypatch):
+    monkeypatch.delenv("VETFLOW_MCP_INPROCESS", raising=False)
+    assert _inprocess_enabled() is False
+
+
+class _FakeInProcessServer:
+    """Fake de MCPServer: list_tools/call_tool async, como o MCPServer real."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, dict]] = []
+
+    async def list_tools(self):
+        return [
+            SimpleNamespace(name="buscar_cliente", description="d", input_schema={}),
+            SimpleNamespace(name="metricas_dashboard", description="d", input_schema={}),
+        ]
+
+    async def call_tool(self, name, arguments):
+        self.calls.append((name, arguments))
+        return SimpleNamespace(
+            is_error=False,
+            content=[SimpleNamespace(text=f"ok:{name}")],
+            structured_content=None,
+        )
+
+
+async def test_inprocess_session_list_tools_expoe_atributo_tools():
+    """O adaptador normaliza list_tools para um objeto com .tools (como o protocolo)."""
+    session = _InProcessSession(_FakeInProcessServer())
+    result = await session.list_tools()
+    assert [t.name for t in result.tools] == ["buscar_cliente", "metricas_dashboard"]
+
+
+async def test_inprocess_session_funciona_com_os_helpers_do_bridge():
+    """A sessão in-process casa com list_tools/dispatch_tool/tools_to_openai do bridge."""
+    from mcp_bridge import dispatch_tool as _dispatch
+    from mcp_bridge import list_tools as _list
+    from mcp_bridge import tools_to_openai as _to_openai
+
+    server = _FakeInProcessServer()
+    session = _InProcessSession(server)
+
+    tools = await _list(session)
+    openai_tools = _to_openai(tools)
+    assert openai_tools[0]["type"] == "function"
+    assert {t["function"]["name"] for t in openai_tools} == {
+        "buscar_cliente",
+        "metricas_dashboard",
+    }
+
+    text, is_error = await _dispatch(session, "buscar_cliente", {"nome": "ana"})
+    assert text == "ok:buscar_cliente"
+    assert is_error is False
+    assert server.calls == [("buscar_cliente", {"nome": "ana"})]

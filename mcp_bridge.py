@@ -18,6 +18,7 @@ import sys
 import tempfile
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
@@ -130,10 +131,100 @@ async def connect_session(user_token: str | None = None):
             tools = await list_tools(session)
             ...
 
-    Sobe o subprocesso, abre a sessão, chama `session.initialize()` e cede. Se o
-    filho sair na hora (credencial ausente, backend fora do ar), traduz tudo
-    para `MCPConnectionError` com uma mensagem amigável em PT-BR, usando o
-    stderr capturado + a folha do ExceptionGroup para dar a causa real.
+    Dois modos, selecionados por `VETFLOW_MCP_INPROCESS`:
+
+    - **in-process** (flag ligado): importa o servidor `vetflow_mcp` e chama
+      suas tools no MESMO processo — sem subir um segundo interpretador Python.
+      Elimina o pico de RAM do subprocesso (causa do OOM no plano free). O token
+      do usuário é escopado por request via `use_request_client` (contextvars),
+      então o isolamento de multi-tenancy é preservado mesmo sem processos
+      separados. Cede um adaptador que expõe a MESMA interface da ClientSession
+      (`list_tools`/`call_tool`), para que `agent.py` não precise mudar.
+
+    - **subprocesso** (default): sobe o `vetflow-mcp` como subprocesso stdio.
+      Modo histórico, idêntico ao do Claude Desktop. Mais isolado (um crash do
+      MCP não derruba a API), ao custo de um segundo interpretador residente.
+
+    Qualquer falha vira `MCPConnectionError` com mensagem amigável em PT-BR.
+    """
+    if _inprocess_enabled():
+        async with _connect_inprocess(user_token) as session:
+            yield session
+        return
+
+    async with _connect_subprocess(user_token) as session:
+        yield session
+
+
+def _inprocess_enabled() -> bool:
+    """True se o consumo in-process do MCP estiver ligado por env."""
+    return os.environ.get("VETFLOW_MCP_INPROCESS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
+class _InProcessSession:
+    """Adaptador que faz um `MCPServer` in-process parecer uma `ClientSession`.
+
+    Expõe só o que o bridge usa — `list_tools()` (devolvendo um objeto com
+    `.tools`, como o protocolo) e `call_tool(name, arguments=...)` (devolvendo o
+    `CallToolResult` que `_flatten_tool_result` já sabe achatar). Assim os
+    helpers `list_tools`/`dispatch_tool` e o `agent.py` funcionam sem mudança.
+    """
+
+    def __init__(self, server: Any) -> None:
+        self._server = server
+
+    async def list_tools(self) -> Any:
+        tools = await self._server.list_tools()
+        return SimpleNamespace(tools=list(tools))
+
+    async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
+        return await self._server.call_tool(name, arguments or {})
+
+
+@asynccontextmanager
+async def _connect_inprocess(user_token: str | None = None):
+    """Cede uma sessão in-process, com o client escopado ao token da request."""
+    _check_required_env(user_token)
+    try:
+        from vetflow_mcp import server as mcp_server
+    except ImportError as exc:  # pacote não instalado no venv
+        raise MCPConnectionError(
+            "Modo in-process pedido (VETFLOW_MCP_INPROCESS) mas o pacote "
+            "vetflow_mcp não está instalado. Rode: pip install -e ../vetflow-mcp "
+            "(ou pip install ./vendor/vetflow-mcp).",
+            detail=str(exc),
+        ) from exc
+
+    try:
+        # use_request_client escopa o VetFlowClient (com o JWT do usuário) ao
+        # contexto desta request via contextvars — isolamento por-usuário sem
+        # subir processo. As tools do server resolvem esse client.
+        async with mcp_server.use_request_client(token=user_token):
+            yield _InProcessSession(mcp_server.mcp)
+    except MCPConnectionError:
+        raise
+    except BaseException as exc:  # noqa: BLE001 - traduzimos tudo em erro amigável
+        leaf = _unwrap_exception(exc)
+        detail = _friendly_detail(leaf, "")
+        raise MCPConnectionError(
+            "Falha ao consumir o vetflow-mcp in-process. Verifique as variáveis "
+            f"VETFLOW_* e se o backend VetFlow está no ar. Causa: {detail}",
+            detail=detail,
+        ) from leaf
+
+
+@asynccontextmanager
+async def _connect_subprocess(user_token: str | None = None):
+    """Sobe o `vetflow-mcp` como subprocesso stdio e cede a ClientSession.
+
+    Modo histórico (default). Traduz uma saída precoce do filho (credencial
+    ausente, backend fora) em `MCPConnectionError` amigável, usando o stderr
+    capturado + a folha do ExceptionGroup do anyio.
     """
     # Falha cedo e amigável se faltar credencial obrigatória (determinístico,
     # independente do comportamento do `-m` no Windows).

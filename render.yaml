@@ -32,6 +32,13 @@ services:
       # Origem do frontend permitida no CORS (a URL do seu Vercel). Obrigatória.
       - key: CORS_ORIGINS
         sync: false
+      # Consome o vetflow-mcp IN-PROCESS (sem subprocesso stdio). Elimina o
+      # segundo interpretador Python por request — o que causava o pico de RAM
+      # (OOM/502) no plano free de 512MB. O isolamento por-usuário é preservado:
+      # o JWT é escopado por request via contextvars (use_request_client). O
+      # modo subprocesso continua sendo o default fora do deploy (Claude Desktop).
+      - key: VETFLOW_MCP_INPROCESS
+        value: "true"
       # BYOK para o LLM: nenhuma ANTHROPIC/OPENAI/GEMINI/AWS key aqui de propósito.
       # O provider/modelo vêm por request (a key do usuário, no navegador dele).
       #
