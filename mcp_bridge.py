@@ -190,6 +190,28 @@ def tools_to_anthropic(tools: list[Any]) -> list[dict[str, Any]]:
     return [tool_to_anthropic(t) for t in tools]
 
 
+def tool_to_openai(tool: Any) -> dict[str, Any]:
+    """Converte uma Tool MCP para o formato de function-calling da OpenAI.
+
+    É o formato que o LiteLLM espera (e traduz para cada provider):
+    {"type": "function", "function": {"name", "description", "parameters"}}.
+    """
+    schema = getattr(tool, "input_schema", None) or {"type": "object", "properties": {}}
+    return {
+        "type": "function",
+        "function": {
+            "name": tool.name,
+            "description": (tool.description or "").strip(),
+            "parameters": schema,
+        },
+    }
+
+
+def tools_to_openai(tools: list[Any]) -> list[dict[str, Any]]:
+    """Converte uma lista de Tools MCP para o formato OpenAI/LiteLLM."""
+    return [tool_to_openai(t) for t in tools]
+
+
 def _flatten_tool_result(result: Any) -> str:
     """Achata um CallToolResult concatenando o `.text` dos blocos TextContent."""
     parts: list[str] = []

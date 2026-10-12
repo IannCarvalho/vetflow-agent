@@ -1,14 +1,21 @@
-"""Loop do agente Claude sobre as ferramentas do `vetflow-mcp`.
+"""Loop do agente sobre as ferramentas do `vetflow-mcp`, via LiteLLM.
 
-Implementa o protocolo de tool-use da Anthropic: pede uma resposta ao modelo,
-executa cada `tool_use` via a ponte MCP, devolve os `tool_result` com o
-`tool_use_id` casando cada resultado ao pedido, e repete até o modelo parar de
-pedir ferramentas. Toda falha vira um `AgentResult(ok=False, ...)` amigável --
-nenhum traceback cru escapa para a UI.
+O LiteLLM dá UMA interface (formato OpenAI) sobre Claude, GPT, Gemini e Bedrock,
+então o loop de tool-use é escrito uma vez só, em formato OpenAI:
+- o modelo responde com `message.tool_calls`;
+- cada tool é despachada via a ponte MCP;
+- devolvemos uma mensagem `{"role": "tool", "tool_call_id": ..., "content": ...}`
+  por chamada, casando o id;
+- paramos quando não há mais `tool_calls`.
+
+Qual provider/modelo é usado vem de `provider.select_model()` (cascata de
+credenciais). Toda falha vira `AgentResult(ok=False, ...)` amigável -- nenhum
+traceback cru escapa para a UI.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -18,14 +25,12 @@ from mcp_bridge import (
     connect_session,
     dispatch_tool,
     list_tools,
-    tools_to_anthropic,
+    tools_to_openai,
 )
-from provider import ProviderUnavailable, build_client
+from provider import ProviderUnavailable, select_model
 
-# Trava de segurança: no máximo 12 idas e voltas de tool-use por mensagem, para
-# o modelo não entrar num laço infinito de chamadas de ferramenta.
+# Trava de segurança: no máximo 12 idas e voltas de tool-use por mensagem.
 MAX_TURNS = 12
-
 MAX_TOKENS = 2048
 
 SYSTEM_PROMPT = (
@@ -48,13 +53,30 @@ class AgentResult:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
-def _extract_text(content_blocks: list[Any]) -> str:
-    """Concatena os blocos de texto da resposta final do modelo."""
-    parts: list[str] = []
-    for block in content_blocks:
-        if getattr(block, "type", None) == "text":
-            parts.append(block.text)
-    return "\n".join(p for p in parts if p).strip()
+def _message_text(message: Any) -> str:
+    """Extrai o texto da mensagem do assistente (dict ou objeto do LiteLLM)."""
+    if isinstance(message, dict):
+        content = message.get("content")
+    else:
+        content = getattr(message, "content", None)
+    return (content or "").strip()
+
+
+def _get_tool_calls(message: Any) -> list[Any]:
+    """Lista de tool_calls da mensagem (vazia se não houver)."""
+    if isinstance(message, dict):
+        return message.get("tool_calls") or []
+    return getattr(message, "tool_calls", None) or []
+
+
+def _tc_field(tc: Any, *path: str) -> Any:
+    """Acessa um campo de um tool_call, tolerante a dict vs objeto."""
+    cur = tc
+    for key in path:
+        cur = cur.get(key) if isinstance(cur, dict) else getattr(cur, key, None)
+        if cur is None:
+            return None
+    return cur
 
 
 async def run_agent(
@@ -62,85 +84,78 @@ async def run_agent(
     history: list[dict[str, Any]] | None = None,
     on_tool_event: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> AgentResult:
-    """Roda uma rodada do agente para `user_message`.
-
-    Args:
-        user_message: a mensagem do usuário.
-        history: histórico de mensagens no formato da Anthropic (role/content).
-        on_tool_event: callback chamado ANTES de cada tool ser despachada,
-            recebendo (nome, argumentos) -- usado pela UI para mostrar a chamada.
-
-    Returns:
-        AgentResult com o texto final e a lista de tool_calls, ou ok=False com
-        uma mensagem de erro amigável (nunca levanta).
-    """
+    """Roda uma rodada do agente para `user_message` (nunca levanta)."""
     try:
-        import anthropic
+        import litellm
     except ImportError:
         return AgentResult(
             text="",
             ok=False,
-            error="Pacote 'anthropic' não instalado. Rode: pip install -r requirements.txt",
+            error="Pacote 'litellm' não instalado. Rode: pip install -r requirements.txt",
         )
 
     tool_calls: list[dict[str, Any]] = []
 
     try:
-        # Seleção de provider em cascata: ANTHROPIC_API_KEY -> Bedrock (.aws).
-        bundle = build_client()
-        client = bundle.client
-        model = bundle.model
+        selection = select_model()
+        model = selection.model
 
         async with connect_session() as session:
             mcp_tools = await list_tools(session)
-            anthropic_tools = tools_to_anthropic(mcp_tools)
+            openai_tools = tools_to_openai(mcp_tools)
 
-            messages: list[dict[str, Any]] = list(history or [])
+            messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+            messages.extend(history or [])
             messages.append({"role": "user", "content": user_message})
 
             for _ in range(MAX_TURNS):
-                response = await client.messages.create(
+                response = await litellm.acompletion(
                     model=model,
-                    max_tokens=MAX_TOKENS,
-                    system=SYSTEM_PROMPT,
                     messages=messages,
-                    tools=anthropic_tools,
+                    tools=openai_tools,
+                    max_tokens=MAX_TOKENS,
                 )
+                message = response.choices[0].message
+                requested = _get_tool_calls(message)
 
-                if response.stop_reason != "tool_use":
+                if not requested:
                     return AgentResult(
-                        text=_extract_text(response.content),
+                        text=_message_text(message),
                         ok=True,
                         tool_calls=tool_calls,
                     )
 
-                # O modelo pediu ferramentas: anexa a resposta dele e despacha
-                # cada bloco tool_use, devolvendo os resultados casados por id.
-                messages.append({"role": "assistant", "content": response.content})
+                # Anexa a mensagem do assistente (com os tool_calls) e despacha.
+                messages.append(
+                    message.model_dump() if hasattr(message, "model_dump") else dict(message)
+                )
 
-                tool_results: list[dict[str, Any]] = []
-                for block in response.content:
-                    if getattr(block, "type", None) != "tool_use":
-                        continue
-                    name = block.name
-                    arguments = block.input or {}
+                for tc in requested:
+                    call_id = _tc_field(tc, "id")
+                    name = _tc_field(tc, "function", "name")
+                    raw_args = _tc_field(tc, "function", "arguments") or "{}"
+                    try:
+                        if isinstance(raw_args, str):
+                            arguments = json.loads(raw_args)
+                        else:
+                            arguments = dict(raw_args)
+                    except (ValueError, TypeError):
+                        arguments = {}
+
                     if on_tool_event is not None:
                         on_tool_event(name, arguments)
                     tool_calls.append({"name": name, "arguments": arguments})
 
-                    text, is_error = await dispatch_tool(session, name, arguments)
-                    tool_results.append(
+                    text, _is_error = await dispatch_tool(session, name, arguments)
+                    messages.append(
                         {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
+                            "role": "tool",
+                            "tool_call_id": call_id,
+                            "name": name,
                             "content": text,
-                            "is_error": is_error,
                         }
                     )
 
-                messages.append({"role": "user", "content": tool_results})
-
-            # Esgotou MAX_TURNS sem o modelo concluir.
             return AgentResult(
                 text="",
                 ok=False,
@@ -155,17 +170,11 @@ async def run_agent(
         return AgentResult(text="", ok=False, error=str(exc), tool_calls=tool_calls)
     except MCPConnectionError as exc:
         return AgentResult(text="", ok=False, error=str(exc), tool_calls=tool_calls)
-    except anthropic.AnthropicError as exc:
-        return AgentResult(
-            text="",
-            ok=False,
-            error=f"Erro na API da Anthropic: {exc}",
-            tool_calls=tool_calls,
-        )
     except Exception as exc:  # noqa: BLE001 - última barreira: nada cru vaza
+        # litellm levanta várias subclasses próprias; tratamos todas aqui.
         return AgentResult(
             text="",
             ok=False,
-            error=f"Erro inesperado no agente: {exc}",
+            error=f"Erro ao chamar o modelo ({type(exc).__name__}): {exc}",
             tool_calls=tool_calls,
         )

@@ -26,6 +26,7 @@ from mcp_bridge import (
     _unwrap_exception,
     dispatch_tool,
     tool_to_anthropic,
+    tool_to_openai,
     tools_to_anthropic,
 )
 
@@ -214,3 +215,25 @@ async def test_dispatch_tool_excecao_vira_erro_amigavel_sem_propagar():
 
     assert is_error is True
     assert "buscar_cliente" in text  # nome da tool aparece na mensagem
+
+
+# --------------------------------------------------------------------------- #
+# tool_to_openai (formato function-calling usado pelo LiteLLM)
+# --------------------------------------------------------------------------- #
+def test_tool_to_openai_formato_function():
+    tool = SimpleNamespace(
+        name="buscar_cliente",
+        description="  Busca clientes.  ",
+        input_schema={"type": "object", "properties": {"nome": {"type": "string"}}},
+    )
+    out = tool_to_openai(tool)
+    assert out["type"] == "function"
+    assert out["function"]["name"] == "buscar_cliente"
+    assert out["function"]["description"] == "Busca clientes."
+    assert out["function"]["parameters"] == tool.input_schema
+
+
+def test_tool_to_openai_fallback_schema_quando_none():
+    tool = SimpleNamespace(name="x", description="d", input_schema=None)
+    out = tool_to_openai(tool)
+    assert out["function"]["parameters"] == {"type": "object", "properties": {}}

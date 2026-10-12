@@ -1,68 +1,74 @@
-"""Testes da seleção de provider (cascata chave -> bedrock -> indisponível).
+"""Testes da seleção de modelo/provider para o LiteLLM.
 
-Determinísticos: mockam os detectores (_has_anthropic_key, _aws_credentials_available)
-e o SDK anthropic, sem tocar em credenciais reais nem na rede.
+Determinísticos: mockam os detectores de credencial e LLM_MODEL; sem rede.
 """
 
 from __future__ import annotations
-
-import sys
-import types
 
 import pytest
 
 import provider
 
 
-@pytest.fixture
-def fake_anthropic(monkeypatch):
-    """Instala um módulo anthropic falso com os dois clientes."""
-    mod = types.ModuleType("anthropic")
-
-    class _Client:
-        def __init__(self, *a, **k):
-            self.args = a
-            self.kwargs = k
-
-    mod.AsyncAnthropic = _Client
-    mod.AsyncAnthropicBedrock = _Client
-    monkeypatch.setitem(sys.modules, "anthropic", mod)
-    return mod
+def _mock_creds(monkeypatch, *, anthropic=False, openai=False, gemini=False, aws=False):
+    monkeypatch.setattr(provider, "_has_anthropic_key", lambda: anthropic)
+    monkeypatch.setattr(provider, "_has_openai_key", lambda: openai)
+    monkeypatch.setattr(provider, "_has_gemini_key", lambda: gemini)
+    monkeypatch.setattr(provider, "_aws_credentials_available", lambda: aws)
 
 
-def test_build_client_prefere_anthropic_quando_ha_chave(monkeypatch, fake_anthropic):
-    monkeypatch.setattr(provider, "_has_anthropic_key", lambda: True)
-    monkeypatch.setattr(provider, "_aws_credentials_available", lambda: True)
-
-    bundle = provider.build_client()
-
-    assert bundle.provider == "anthropic"
-    assert bundle.model == provider.ANTHROPIC_MODEL
+def test_auto_prefere_anthropic(monkeypatch):
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    _mock_creds(monkeypatch, anthropic=True, openai=True)
+    sel = provider.select_model()
+    assert sel.provider == "anthropic"
+    assert sel.model == provider.DEFAULT_ANTHROPIC
 
 
-def test_build_client_cai_para_bedrock_sem_chave(monkeypatch, fake_anthropic):
-    monkeypatch.setattr(provider, "_has_anthropic_key", lambda: False)
-    monkeypatch.setattr(provider, "_aws_credentials_available", lambda: True)
-    monkeypatch.setattr(provider, "_aws_region", lambda: "us-east-1")
-
-    bundle = provider.build_client()
-
-    assert bundle.provider == "bedrock"
-    assert bundle.model == provider.BEDROCK_MODEL
+def test_auto_cai_para_openai_sem_anthropic(monkeypatch):
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    _mock_creds(monkeypatch, openai=True)
+    sel = provider.select_model()
+    assert sel.provider == "openai"
 
 
-def test_build_client_sem_nada_levanta_provider_unavailable(monkeypatch, fake_anthropic):
-    monkeypatch.setattr(provider, "_has_anthropic_key", lambda: False)
-    monkeypatch.setattr(provider, "_aws_credentials_available", lambda: False)
+def test_auto_cai_para_gemini(monkeypatch):
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    _mock_creds(monkeypatch, gemini=True)
+    assert provider.select_model().provider == "gemini"
 
+
+def test_auto_cai_para_bedrock_por_ultimo(monkeypatch):
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    _mock_creds(monkeypatch, aws=True)
+    assert provider.select_model().provider == "bedrock"
+
+
+def test_llm_model_explicito_manda(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+    _mock_creds(monkeypatch, anthropic=True, openai=True)  # chave p/ openai existe
+    sel = provider.select_model()
+    assert sel.provider == "openai"
+    assert sel.model == "gpt-4o"
+
+
+def test_llm_model_explicito_sem_credencial_levanta(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "gpt-4o")
+    _mock_creds(monkeypatch, anthropic=True)  # só anthropic, mas pediu openai
     with pytest.raises(provider.ProviderUnavailable):
-        provider.build_client()
+        provider.select_model()
 
 
-def test_provider_available_reflete_qualquer_caminho(monkeypatch):
-    monkeypatch.setattr(provider, "_has_anthropic_key", lambda: False)
-    monkeypatch.setattr(provider, "_aws_credentials_available", lambda: False)
+def test_provider_of_model_infere_corretamente():
+    assert provider._provider_of_model("gpt-4o") == "openai"
+    assert provider._provider_of_model("claude-3-5-sonnet-latest") == "anthropic"
+    assert provider._provider_of_model("gemini/gemini-1.5-pro") == "gemini"
+    assert provider._provider_of_model("bedrock/anthropic.claude-x") == "bedrock"
+
+
+def test_sem_nada_levanta_e_provider_available_false(monkeypatch):
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    _mock_creds(monkeypatch)
+    with pytest.raises(provider.ProviderUnavailable):
+        provider.select_model()
     assert provider.provider_available() is False
-
-    monkeypatch.setattr(provider, "_aws_credentials_available", lambda: True)
-    assert provider.provider_available() is True

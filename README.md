@@ -25,10 +25,10 @@ argumentos.
    app.py (Streamlit)
         │  asyncio.run(run_agent(...))
         ▼
-   agent.py ── loop de tool-use da Anthropic ──► API da Anthropic (Claude)
-        │                                              ▲
-        │ dispatch_tool / list_tools                   │ tools (auto-discovery)
-        ▼                                              │
+   agent.py ── loop de tool-use (formato OpenAI) ──► LiteLLM ──► Claude / GPT / Gemini / Bedrock
+        │                                                           ▲
+        │ dispatch_tool / list_tools                                │ tools (auto-discovery)
+        ▼                                                           │
    mcp_bridge.py ── stdio (subprocesso) ──► vetflow-mcp (python -m vetflow_mcp.server)
                                                    │  Bearer JWT
                                                    ▼
@@ -37,15 +37,31 @@ argumentos.
 
 - **`mcp_bridge.py`** sobe o `vetflow-mcp` como **subprocesso via stdio** (o
   transporte padrão do SDK `mcp`), descobre as tools em tempo de execução
-  (*auto-discovery*) e as converte para o formato de ferramenta da Anthropic.
-  As credenciais `VETFLOW_*` são repassadas ao filho pelo ambiente; o app nunca
-  fala com o backend Go diretamente.
-- **`agent.py`** implementa o **loop de tool-use** do protocolo Anthropic: pede
-  uma resposta ao Claude, executa cada `tool_use`, devolve os `tool_result`
-  casados por `tool_use_id` e repete até o modelo parar de pedir ferramentas
-  (com uma trava `MAX_TURNS = 12`).
+  (*auto-discovery*) e as converte para o formato de function-calling da OpenAI
+  (que o LiteLLM usa). As credenciais `VETFLOW_*` são repassadas ao filho pelo
+  ambiente; o app nunca fala com o backend Go diretamente.
+- **`agent.py`** implementa o **loop de tool-use** no formato OpenAI, via
+  `litellm.acompletion`: pede uma resposta ao modelo, executa cada `tool_call`,
+  devolve uma mensagem `role:"tool"` casada por `tool_call_id` e repete até o
+  modelo parar de pedir ferramentas (trava `MAX_TURNS = 12`).
+- **`provider.py`** decide **qual LLM usar** (multi-provider via LiteLLM): honra
+  `LLM_MODEL` se definido, senão auto-detecta pela credencial presente nesta
+  ordem — Anthropic → OpenAI → Gemini → **Bedrock (perfil `.aws` default)**.
 - **`app.py`** é a UI: chat, histórico, exibição das ferramentas e uma sidebar
-  de status que **nunca mostra a senha nem a chave de API**.
+  de status que mostra o provider ativo e **nunca mostra senha nem chave**.
+
+## Multi-provider (LiteLLM)
+
+O agente roda sobre **qualquer LLM** suportado pelo LiteLLM. Você escolhe de
+duas formas:
+
+- **Explícito:** defina `LLM_MODEL` no `.env` — ex. `gpt-4o`,
+  `claude-3-5-sonnet-latest`, `gemini/gemini-1.5-pro`,
+  `bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0`.
+- **Automático:** não defina `LLM_MODEL`; o app usa o primeiro provider com
+  credencial disponível, nesta ordem de preferência: `ANTHROPIC_API_KEY` →
+  `OPENAI_API_KEY` → `GEMINI_API_KEY` → **Amazon Bedrock** (credenciais do
+  perfil `.aws` default, sem precisar declarar nada).
 
 ## Abordagem de integração escolhida
 
