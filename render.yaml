@@ -5,8 +5,10 @@
 # O servidor só precisa saber falar com o backend VetFlow (para as ferramentas
 # do MCP) e com o frontend (CORS).
 #
-# O vetflow-mcp é instalado a partir do GitHub (público) no build — não há
-# `../vetflow-mcp` no Render, então a dependência vem do repositório.
+# O vetflow-mcp vem como git SUBMODULE em vendor/vetflow-mcp — mantém o MCP como
+# repositório separado, mas o build fica autocontido (sem clone externo anônimo).
+# O Render clona submodules com a credencial da sua integração GitHub, então
+# funciona mesmo com o vetflow-mcp PRIVADO (ao contrário de `pip install git+`).
 #
 # Como usar: no Render, New > Blueprint, aponte para este repositório. Depois
 # preencha no painel as variáveis marcadas como sync:false (não versionadas).
@@ -18,7 +20,7 @@ services:
     plan: free
     buildCommand: |
       pip install -r requirements.txt
-      pip install "git+https://github.com/IannCarvalho/vetflow-mcp.git"
+      pip install ./vendor/vetflow-mcp
     startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:

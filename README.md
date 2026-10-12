@@ -157,10 +157,12 @@ Pontos do deploy:
 - **BYOK-only:** o servidor **não** carrega nenhuma chave de LLM. Quem usar o
   chat traz a própria key (enviada por request, guardada no navegador). Assim o
   deploy não tem custo de LLM nem guarda credenciais de terceiros.
-- **`vetflow-mcp` via GitHub:** o build instala o MCP direto do repositório
-  (`pip install git+https://github.com/IannCarvalho/vetflow-mcp.git`), já que o
-  `../vetflow-mcp` local não existe no Render. Requer o repo do MCP acessível
-  (público, ou com token de deploy).
+- **`vetflow-mcp` via git submodule:** o MCP vem em `vendor/vetflow-mcp` como
+  **submodule** (continua sendo um repositório separado). O build roda
+  `pip install ./vendor/vetflow-mcp`, sem clone externo anônimo. O Render clona
+  submodules com a credencial da sua integração GitHub, então **funciona mesmo
+  com o `vetflow-mcp` privado**. Ao clonar para dev local, use
+  `git clone --recursive` (ou `git submodule update --init`).
 - **Variáveis a preencher:** `VETFLOW_EMAIL`, `VETFLOW_PASSWORD` (login do vet
   que o MCP usa) e `CORS_ORIGINS` (a URL do frontend no Vercel). `VETFLOW_BASE_URL`
   já aponta para o backend de produção no blueprint.
