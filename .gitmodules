@@ -1,0 +1,3 @@
+[submodule "vendor/vetflow-mcp"]
+	path = vendor/vetflow-mcp
+	url = https://github.com/IannCarvalho/vetflow-mcp.git
