@@ -1,0 +1,13 @@
+# Segredos -- NUNCA commitar.
+.env
+
+# Ambiente virtual.
+.venv/
+venv/
+
+# Caches do Python / ferramentas.
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.streamlit/secrets.toml
