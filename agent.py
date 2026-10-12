@@ -94,6 +94,23 @@ async def run_agent(
     `user_token` é o JWT do usuário logado (pass-through): repassado ao MCP para
     que ele aja como esse usuário, em vez de uma conta de serviço.
     """
+    # Fail-fast de provider ANTES de carregar pesos (LiteLLM + subprocesso MCP).
+    # Sem credencial de LLM não há como responder; resolver o provider primeiro
+    # evita importar o LiteLLM e levantar o MCP à toa — o que, somado, estoura a
+    # RAM no plano free (causa de OOM/502). Esta checagem é barata (só inspeciona
+    # o ambiente/.aws, não fala com provider nenhum).
+    try:
+        selection = select_model_with_overrides(model=model, api_key=api_key)
+    except ProviderUnavailable as exc:
+        return AgentResult(
+            text="",
+            ok=False,
+            error=(
+                "Nenhum provider de LLM configurado. Informe uma API key no chat "
+                f"(BYOK) ou configure o servidor. Detalhe: {exc}"
+            ),
+        )
+
     try:
         import litellm
     except ImportError:
@@ -106,7 +123,6 @@ async def run_agent(
     tool_calls: list[dict[str, Any]] = []
 
     try:
-        selection = select_model_with_overrides(model=model, api_key=api_key)
         chosen_model = selection.model
         # Chave BYOK (se veio no request) é passada ao litellm só nesta chamada.
         byok_key = (api_key or "").strip() or None
@@ -180,8 +196,6 @@ async def run_agent(
                 tool_calls=tool_calls,
             )
 
-    except ProviderUnavailable as exc:
-        return AgentResult(text="", ok=False, error=str(exc), tool_calls=tool_calls)
     except MCPConnectionError as exc:
         return AgentResult(text="", ok=False, error=str(exc), tool_calls=tool_calls)
     except Exception as exc:  # noqa: BLE001 - última barreira: nada cru vaza
