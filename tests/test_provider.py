@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-import provider
+import vetflow_agent.core.provider as provider
 
 
 def _mock_creds(monkeypatch, *, anthropic=False, openai=False, gemini=False, aws=False):

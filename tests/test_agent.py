@@ -11,8 +11,8 @@ import types
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
-import agent
-from agent import AgentResult, run_agent
+import vetflow_agent.core.agent as agent
+from vetflow_agent.core.agent import AgentResult, run_agent
 
 
 def _install_litellm_stub(monkeypatch, responses):
@@ -64,7 +64,7 @@ def test_agent_result_tool_calls_independente_por_instancia():
 # run_agent sem nenhum provider disponível
 # --------------------------------------------------------------------------- #
 async def test_run_agent_sem_provider_retorna_ok_false_sem_levantar(monkeypatch):
-    from provider import ProviderUnavailable
+    from vetflow_agent.core.provider import ProviderUnavailable
 
     # Garante um litellm importável (não deve nem chegar a usá-lo).
     _install_litellm_stub(monkeypatch, [])

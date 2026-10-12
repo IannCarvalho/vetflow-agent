@@ -1,3 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vetflow-agent"
+version = "1.0.0"
+description = "Agente de IA multi-provider sobre o vetflow-mcp (API FastAPI + UI Streamlit)."
+requires-python = ">=3.10"
+dependencies = [
+    "litellm>=1.50.0",
+    "anthropic>=0.39.0",
+    "boto3>=1.34.0",
+    "mcp>=2.3.0",
+    "python-dotenv>=1.0.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

@@ -21,9 +21,9 @@ services:
     runtime: python
     plan: free
     buildCommand: |
-      pip install -r requirements.txt
+      pip install .
       pip install ./vendor/vetflow-mcp
-    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn vetflow_agent.api.api:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       # Backend VetFlow de produção (as ferramentas do MCP falam com ele).

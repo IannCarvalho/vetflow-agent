@@ -1,24 +1,19 @@
 """Configuração de testes do vetflow-agent.
 
-Garante que os módulos de topo (mcp_bridge, agent) sejam importáveis pelos
-testes e instala um stub mínimo do pacote `anthropic` em sys.modules, já que
+Instala um stub mínimo do pacote `anthropic` em sys.modules, já que
 `agent.run_agent` faz `import anthropic` por dentro. O stub expõe exatamente o
 que o código toca: AsyncAnthropic e AnthropicError. Testes que precisam dirigir
 o loop de tool-use substituem AsyncAnthropic por um fake via monkeypatch no
 atributo do próprio módulo stub.
+
+O pacote `vetflow_agent` é importável porque é instalado em modo editável
+(`pip install -e .`), então não há manipulação de sys.path aqui.
 """
 
 from __future__ import annotations
 
 import sys
 import types
-from pathlib import Path
-
-# Raiz do app (onde vivem mcp_bridge.py e agent.py). Garante o import mesmo
-# quando o pytest é chamado de outro cwd.
-APP_DIR = Path(__file__).resolve().parent
-if str(APP_DIR) not in sys.path:
-    sys.path.insert(0, str(APP_DIR))
 
 
 def _install_anthropic_stub() -> None:
