@@ -53,6 +53,53 @@ class AgentResult:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
+# --------------------------------------------------------------------------- #
+# Fronteira de normalização da mensagem do LLM
+#
+# O LiteLLM devolve a mensagem do assistente ora como objeto (choices[0].message
+# com .content/.tool_calls/.model_dump()), ora como dict -- a mesma quirk em dois
+# formatos. Em vez de deixar esse "é dict ou objeto?" vazar por todo o loop de
+# run_agent, concentramos a defensiva num seam só: `normalize_message` lê o cru e
+# devolve um `AssistantMessage` tipado. O loop passa a ler `msg.text`,
+# `msg.tool_calls[i].name/.arguments` e `msg.as_openai_dict()`, sem saber de qual
+# formato o LiteLLM veio.
+#
+# Ganho: locality (a quirk mora num lugar) e superfície de teste (dá pra testar o
+# parsing de tool-call -- inclusive arguments JSON inválido -- sem montar o loop).
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class ToolCall:
+    """Uma chamada de ferramenta já normalizada.
+
+    `arguments` já vem como dict: o json.loads/try-except (string JSON do provider,
+    inválida -> {}) acontece dentro da normalização, não no loop.
+    """
+
+    id: str
+    name: str
+    arguments: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AssistantMessage:
+    """Mensagem do assistente normalizada, independente do formato do LiteLLM."""
+
+    text: str
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    # Forma OpenAI original (dict) para anexar ao histórico sem perder campos.
+    _raw_openai_dict: dict[str, Any] = field(default_factory=dict)
+
+    def as_openai_dict(self) -> dict[str, Any]:
+        """Reproduz o `message.model_dump()`/`dict(message)` para o histórico.
+
+        É a mensagem do assistant (com os tool_calls) que o loop anexa a
+        `messages` antes de despachar as ferramentas.
+        """
+        return self._raw_openai_dict
+
+
 def _message_text(message: Any) -> str:
     """Extrai o texto da mensagem do assistente (dict ou objeto do LiteLLM)."""
     if isinstance(message, dict):
@@ -63,20 +110,61 @@ def _message_text(message: Any) -> str:
 
 
 def _get_tool_calls(message: Any) -> list[Any]:
-    """Lista de tool_calls da mensagem (vazia se não houver)."""
+    """Lista de tool_calls crus da mensagem (vazia se não houver)."""
     if isinstance(message, dict):
         return message.get("tool_calls") or []
     return getattr(message, "tool_calls", None) or []
 
 
 def _tc_field(tc: Any, *path: str) -> Any:
-    """Acessa um campo de um tool_call, tolerante a dict vs objeto."""
+    """Acessa um campo de um tool_call cru, tolerante a dict vs objeto."""
     cur = tc
     for key in path:
         cur = cur.get(key) if isinstance(cur, dict) else getattr(cur, key, None)
         if cur is None:
             return None
     return cur
+
+
+def _message_as_openai_dict(message: Any) -> dict[str, Any]:
+    """Serializa a mensagem crua do assistente para dict no formato OpenAI."""
+    if hasattr(message, "model_dump"):
+        return message.model_dump()
+    return dict(message)
+
+
+def _parse_arguments(raw_args: Any) -> dict[str, Any]:
+    """Normaliza os arguments de um tool_call para dict (inválido -> {})."""
+    if raw_args is None:
+        raw_args = "{}"
+    try:
+        if isinstance(raw_args, str):
+            return json.loads(raw_args)
+        return dict(raw_args)
+    except (ValueError, TypeError):
+        return {}
+
+
+def normalize_message(raw: Any) -> AssistantMessage:
+    """Normaliza a mensagem crua do LiteLLM (dict OU objeto) em `AssistantMessage`.
+
+    Este é o único ponto que conhece o formato cru do provider. Faz o parsing dos
+    arguments de cada tool_call aqui dentro, para o loop lidar só com dados já
+    tipados.
+    """
+    tool_calls = [
+        ToolCall(
+            id=_tc_field(tc, "id"),
+            name=_tc_field(tc, "function", "name"),
+            arguments=_parse_arguments(_tc_field(tc, "function", "arguments")),
+        )
+        for tc in _get_tool_calls(raw)
+    ]
+    return AssistantMessage(
+        text=_message_text(raw),
+        tool_calls=tool_calls,
+        _raw_openai_dict=_message_as_openai_dict(raw),
+    )
 
 
 async def run_agent(
@@ -145,43 +233,29 @@ async def run_agent(
                 if byok_key:
                     completion_kwargs["api_key"] = byok_key
                 response = await litellm.acompletion(**completion_kwargs)
-                message = response.choices[0].message
-                requested = _get_tool_calls(message)
+                msg = normalize_message(response.choices[0].message)
 
-                if not requested:
+                if not msg.tool_calls:
                     return AgentResult(
-                        text=_message_text(message),
+                        text=msg.text,
                         ok=True,
                         tool_calls=tool_calls,
                     )
 
                 # Anexa a mensagem do assistente (com os tool_calls) e despacha.
-                messages.append(
-                    message.model_dump() if hasattr(message, "model_dump") else dict(message)
-                )
+                messages.append(msg.as_openai_dict())
 
-                for tc in requested:
-                    call_id = _tc_field(tc, "id")
-                    name = _tc_field(tc, "function", "name")
-                    raw_args = _tc_field(tc, "function", "arguments") or "{}"
-                    try:
-                        if isinstance(raw_args, str):
-                            arguments = json.loads(raw_args)
-                        else:
-                            arguments = dict(raw_args)
-                    except (ValueError, TypeError):
-                        arguments = {}
-
+                for tc in msg.tool_calls:
                     if on_tool_event is not None:
-                        on_tool_event(name, arguments)
-                    tool_calls.append({"name": name, "arguments": arguments})
+                        on_tool_event(tc.name, tc.arguments)
+                    tool_calls.append({"name": tc.name, "arguments": tc.arguments})
 
-                    text, _is_error = await dispatch_tool(session, name, arguments)
+                    text, _is_error = await dispatch_tool(session, tc.name, tc.arguments)
                     messages.append(
                         {
                             "role": "tool",
-                            "tool_call_id": call_id,
-                            "name": name,
+                            "tool_call_id": tc.id,
+                            "name": tc.name,
                             "content": text,
                         }
                     )
