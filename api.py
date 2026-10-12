@@ -30,7 +30,7 @@ from dotenv import load_dotenv
 # AWS e VETFLOW_* cheguem também ao subprocesso MCP.
 load_dotenv()
 
-from fastapi import FastAPI  # noqa: E402 - após load_dotenv
+from fastapi import FastAPI, Request  # noqa: E402 - após load_dotenv
 from fastapi.concurrency import run_in_threadpool  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
@@ -175,10 +175,20 @@ async def list_models(req: ModelsRequest) -> dict:
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest) -> ChatResponse:
-    """Roda uma rodada do agente. Nunca levanta: erros vêm em ok=False/error."""
+async def chat(req: ChatRequest, request: Request) -> ChatResponse:
+    """Roda uma rodada do agente. Nunca levanta: erros vêm em ok=False/error.
+
+    O JWT do usuário logado chega no header `Authorization: Bearer <jwt>` e é
+    repassado ao agente/MCP (pass-through) — o chat age como esse usuário.
+    """
+    auth = request.headers.get("authorization", "")
+    user_token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
     result = await run_agent(
-        req.message, history=req.history, model=req.model, api_key=req.api_key
+        req.message,
+        history=req.history,
+        model=req.model,
+        api_key=req.api_key,
+        user_token=user_token or None,
     )
     tool_calls = [
         ToolCall(name=c["name"], arguments=c.get("arguments") or {})

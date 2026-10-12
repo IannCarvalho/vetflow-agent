@@ -100,7 +100,7 @@ async def test_run_agent_loop_tool_use_mockado(monkeypatch):
     fake_session = SimpleNamespace()
 
     @asynccontextmanager
-    async def fake_connect_session():
+    async def fake_connect_session(user_token=None):
         yield fake_session
 
     monkeypatch.setattr(agent, "connect_session", fake_connect_session)
@@ -140,7 +140,7 @@ async def test_run_agent_parsa_argumentos_json(monkeypatch):
     fake_session = SimpleNamespace()
 
     @asynccontextmanager
-    async def fake_connect_session():
+    async def fake_connect_session(user_token=None):
         yield fake_session
 
     monkeypatch.setattr(agent, "connect_session", fake_connect_session)

@@ -21,7 +21,9 @@ def _client(monkeypatch, agent_result):
     import agent as agent_mod
     import api as api_mod
 
-    async def fake_run_agent(message, history=None, on_tool_event=None, model=None, api_key=None):
+    async def fake_run_agent(
+        message, history=None, on_tool_event=None, model=None, api_key=None, user_token=None
+    ):
         return agent_result
 
     monkeypatch.setattr(api_mod, "run_agent", fake_run_agent)
@@ -137,3 +139,31 @@ def test_providers_models_lista_vazia_e_invalida(monkeypatch):
     assert body["ok"] is False
     assert body["models"] == []
     assert body["error"]
+
+
+def test_chat_repassa_bearer_como_user_token(monkeypatch):
+    import api as api_mod
+    from agent import AgentResult
+
+    captured = {}
+
+    async def fake_run_agent(
+        message, history=None, on_tool_event=None, model=None, api_key=None, user_token=None
+    ):
+        captured["user_token"] = user_token
+        return AgentResult(text="ok")
+
+    monkeypatch.setattr(api_mod, "run_agent", fake_run_agent)
+    monkeypatch.setattr(api_mod, "provider_available", lambda: True)
+    monkeypatch.setattr(api_mod, "describe_provider", lambda: "x")
+
+    from fastapi.testclient import TestClient
+
+    client = TestClient(api_mod.app)
+    r = client.post(
+        "/chat",
+        json={"message": "oi"},
+        headers={"Authorization": "Bearer jwt-user-123"},
+    )
+    assert r.status_code == 200
+    assert captured["user_token"] == "jwt-user-123"
