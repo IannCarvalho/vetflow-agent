@@ -54,8 +54,8 @@ flowchart TD
     api --> agent
     agent -- "litellm.acompletion" --> llm
     agent -- "dispatch_tool / list_tools" --> bridge
-    bridge -- "stdio (subprocesso)" --> mcp
-    mcp -- "Bearer JWT" --> be
+    bridge -- "in-process (deploy) · stdio subprocesso (local)" --> mcp
+    mcp -- "Bearer JWT (pass-through do usuário)" --> be
     be --> db
 ```
 
@@ -122,9 +122,9 @@ reimplementar o acoplamento com o backend).
 
 Por isso o agente **consome** o MCP sem fundir código: em dev via `pip install -e
 ../vetflow-mcp`, no deploy via git **submodule** (`vendor/vetflow-mcp`, build
-autocontido). O custo de ter dois *processos* em runtime (o subprocesso stdio)
-não se paga fundindo repositórios e sim movendo o MCP para **in-process** quando a
-escala exigir — ver *"Como o MCP é consumido: subprocesso vs. in-process"* abaixo.
+autocontido). O custo de ter dois *processos* em runtime (o subprocesso stdio) é
+evitado em produção consumindo o MCP **in-process** — ver *"Como o MCP é
+consumido: in-process vs. subprocesso"* abaixo.
 
 ## Setup
 
@@ -142,8 +142,12 @@ pip install -e .                   # instala o vetflow-agent (src layout) + deps
 pip install -e ../vetflow-mcp      # instala o servidor MCP no mesmo venv
 
 cp .env.example .env               # (ou copie manualmente no Windows)
-# edite o .env: uma chave de provider (ANTHROPIC/OPENAI/GEMINI) OU perfil .aws
-# para Bedrock, + VETFLOW_BASE_URL/EMAIL/PASSWORD
+# edite o .env. Para rodar LOCAL contra um backend:
+#   - LLM: uma chave de provider (ANTHROPIC/OPENAI/GEMINI) OU perfil .aws
+#     (Bedrock). No DEPLOY nada disso é usado — o LLM é BYOK (ver abaixo).
+#   - Backend: VETFLOW_BASE_URL. A auth do chat é PASS-THROUGH do JWT do
+#     usuário logado (chega no header do POST /chat); VETFLOW_EMAIL/PASSWORD
+#     são apenas fallback opcional para rodar sem um usuário logado.
 ```
 
 Rode a **API** (para o frontend consumir):
@@ -163,19 +167,21 @@ streamlit run src/vetflow_agent/ui/app.py
 | Variável | Papel |
 |---|---|
 | `LLM_MODEL` | Força um modelo/provider (ex. `gpt-4o`, `gemini/gemini-2.0-flash`). Opcional — sem ela, auto-detecta. |
-| `ANTHROPIC_API_KEY` | Provider Anthropic (Claude). |
-| `OPENAI_API_KEY` | Provider OpenAI (GPT). |
-| `GEMINI_API_KEY` | Provider Google (Gemini). |
-| `AWS_PROFILE` / `AWS_REGION` / `BEDROCK_MODEL_ID` | Bedrock (opcional; usa o perfil `.aws` default). |
+| `ANTHROPIC_API_KEY` | Provider Anthropic (Claude). **Local apenas** — no deploy o LLM é BYOK. |
+| `OPENAI_API_KEY` | Provider OpenAI (GPT). **Local apenas** — no deploy o LLM é BYOK. |
+| `GEMINI_API_KEY` | Provider Google (Gemini). **Local apenas** — no deploy o LLM é BYOK. |
+| `AWS_PROFILE` / `AWS_REGION` / `BEDROCK_MODEL_ID` | Bedrock (opcional; usa o perfil `.aws` default). **Local apenas.** |
 | `CORS_ORIGINS` | Origens permitidas na API (default cobre o dev do VetFlow/Vite). |
 | `VETFLOW_BASE_URL` | URL do backend VetFlow (ex.: `http://localhost:8080`). |
-| `VETFLOW_EMAIL` / `VETFLOW_PASSWORD` | Login do vet; o MCP autentica no backend. |
+| `VETFLOW_MCP_INPROCESS` | Consome o MCP in-process (sem subprocesso). `true` no deploy (`render.yaml`); default desligado (local/Claude Desktop usam subprocesso). |
+| `VETFLOW_EMAIL` / `VETFLOW_PASSWORD` | Login do vet — **fallback opcional**. No agente deployado a auth é pass-through (o JWT do usuário logado chega no header do `/chat`); email/senha só servem para rodar sem usuário logado. |
 | `VETFLOW_TIMEOUT_S` | Timeout HTTP em segundos (default 15). |
 | `VETFLOW_ENABLE_WRITES` | Liga as tools de escrita do MCP (default `false`). |
 
-As credenciais de LLM podem vir do ambiente (acima) **ou** por request (BYOK, o
-widget manda a key do usuário). Todas são carregadas no topo do `app.py`/`api.py`
-antes de importar o agente, para chegarem também ao subprocesso MCP.
+As credenciais de LLM podem vir do ambiente (acima, **só em execução local**)
+**ou** por request (BYOK, o widget manda a key do usuário — o único caminho no
+deploy). São carregadas no topo do `api.py` antes de importar o agente, para
+chegarem também ao MCP.
 
 ## Deploy (Render)
 
@@ -203,41 +209,41 @@ Pontos do deploy:
 > Sem este deploy, o widget em produção mostra *"Não consegui falar com o
 > assistente (Network Error)"* — o front está no ar, mas a API do agente não.
 
-## Como o MCP é consumido: subprocesso vs. in-process
+## Como o MCP é consumido: in-process (deploy) vs. subprocesso (local)
 
 Esta é a decisão de arquitetura mais importante do agente e vale entender o
 porquê, porque ela define o **perfil de memória** em produção.
 
-Hoje, cada `POST /chat` sobe o `vetflow-mcp` como **subprocesso stdio próprio**
-(`python -m vetflow_mcp.server`), fala com ele pelo `mcp_bridge.py`, e o fecha ao
-terminar. Ou seja: durante uma conversa com ferramentas, **dois interpretadores
-Python coexistem** — o do agente (FastAPI + LiteLLM) e o do MCP.
+O `mcp_bridge.py` suporta **dois modos**, selecionados pela env
+`VETFLOW_MCP_INPROCESS`:
+
+- **in-process** (flag ligado) — o agente importa `vetflow_mcp` e chama
+  `list_tools()`/`call_tool()` direto, no mesmo processo. **É o modo de
+  produção**: o `render.yaml` define `VETFLOW_MCP_INPROCESS=true`.
+- **subprocesso stdio** (default, flag desligado) — cada chamada sobe o
+  `vetflow-mcp` como processo separado (`python -m vetflow_mcp.server`), falado
+  pela ponte. É o default fora do deploy e o modo que o **Claude Desktop** usa.
 
 ### As duas abordagens
 
-| | **Subprocesso por request** (atual) | **In-process** (alternativa) |
+| | **In-process** (produção / deploy) | **Subprocesso por request** (default local / Claude Desktop) |
 |---|---|---|
-| Como roda | o MCP é um processo separado, falado por stdio | o agente importa `vetflow_mcp` e chama `list_tools()`/`call_tool()` direto |
-| Isolamento | **total** — cada request tem seu processo e seu token; um crash do MCP não derruba a API | compartilhado — tudo roda no mesmo processo |
-| Multi-tenancy | **seguro por construção** — processos não compartilham estado, então o JWT de um usuário nunca vaza para outro | **exige cuidado** — o `server.py` do MCP usa um `_client` singleton global; in-process ingênuo reabriria o furo de multi-tenancy |
-| Memória | **pico alto** — dois Python residentes ao mesmo tempo (o segundo custa ~80MB) | **enxuto** — um só interpretador |
-| Latência | custo de subir o subprocesso a cada request | sem spawn; chamada de função direta |
+| Como roda | o agente importa `vetflow_mcp` e chama `list_tools()`/`call_tool()` direto | o MCP é um processo separado, falado por stdio |
+| Isolamento | compartilhado — tudo roda no mesmo processo | **total** — cada request tem seu processo e seu token; um crash do MCP não derruba a API |
+| Multi-tenancy | **seguro via `contextvars`** — o `use_request_client` mantém client/token por request, sem o furo do `_client` singleton global | **seguro por construção** — processos não compartilham estado, então o JWT de um usuário nunca vaza para outro |
+| Memória | **enxuto** — um só interpretador | **pico alto** — dois Python residentes ao mesmo tempo (o segundo custa ~80MB) |
+| Latência | sem spawn; chamada de função direta | custo de subir o subprocesso a cada request |
 
-### Por que o subprocesso foi escolhido
+### Por que in-process em produção
 
-**Isolamento e segurança de multi-tenancy, de graça.** Como cada request tem seu
-próprio processo, o token (JWT) de um usuário fisicamente não pode vazar para a
-request de outro — não há estado compartilhado para vazar. Para um serviço que
-age com a identidade de quem está logado (ver *pass-through* na seção de deploy),
-essa garantia vale muito e sai sem escrever uma linha de código de isolamento.
+**RAM de pico no plano free.** No subprocesso, durante uma chamada de ferramenta
+**dois interpretadores Python coexistem** — o do agente (FastAPI + LiteLLM) e o
+do MCP (~80MB extra). No free tier do Render (**512MB**) isso chegava perto do
+teto e causou **OOM-kill** (`502` com header `x-render-routing: no-deploy`, logs
+subindo → `Shutting down` sem traceback → reiniciar). O in-process elimina o
+segundo interpretador e é o que estabilizou o serviço no free tier.
 
-### O custo, e quando ele morde
-
-O preço é a **RAM de pico**: no plano free do Render (**512MB**), os dois
-interpretadores Python coexistindo durante uma chamada de ferramenta chegam
-perto do teto. Isso já causou **OOM-kill** (`502` com header
-`x-render-routing: no-deploy`, logs subindo → `Shutting down` sem traceback →
-reiniciar). Duas mudanças aliviaram o pico sem mexer na arquitetura:
+Duas mudanças anteriores já tinham aliviado o pico e seguem valendo:
 
 - **fail-fast de provider:** `run_agent` resolve o provider *antes* de importar
   o LiteLLM e abrir o MCP — uma request sem provider não carrega os dois pesos à
@@ -246,23 +252,26 @@ reiniciar). Duas mudanças aliviaram o pico sem mexer na arquitetura:
   arrasta pandas/pyarrow/numpy/altair, que a API nunca importa) e foi para o
   `requirements-dev.txt`.
 
-Com esses dois cortes o serviço roda **estável no free tier** e já respondeu um
-`POST /chat` real end-to-end (front → agente → MCP → backend). O subprocesso
-segue sendo a abordagem em produção.
+### Como o in-process preserva o isolamento de multi-tenancy
 
-### O caminho de saída, se precisar escalar
+O risco do in-process é o estado compartilhado: o `server.py` do MCP usava um
+`_client` singleton global, e um in-process ingênuo reabriria o furo de
+multi-tenancy (o JWT de um usuário vazando para a request de outro). A solução
+(**Opção A**, já implementada no `vetflow-mcp`) é manter o client/token **por
+request** via `contextvars` (`use_request_client`): cada `POST /chat` roda com o
+seu próprio token escopado, sem subir um processo. O `_connect_inprocess` do
+`mcp_bridge.py` entra por esse caminho.
 
-Se a carga crescer e a RAM de pico voltar a ser o gargalo, a cura real é mover o
-MCP para **in-process** — eliminando o segundo interpretador. O bloqueio é o
-`_client` singleton global do `server.py`; a solução acordada (**Opção A**) é usar
-`contextvars` para manter o client/token **por request**, preservando o
-isolamento de multi-tenancy sem subir um processo. É um PR no `vetflow-mcp` + uma
-troca no `mcp_bridge.py`. O modo subprocesso **permanece** de qualquer forma —
-ele é como o `vetflow-mcp` serve o Claude Desktop e outros clientes stdio.
+### O subprocesso continua existindo
 
-> **Resumo:** subprocesso = mais RAM, isolamento grátis, em produção hoje.
-> In-process = enxuto, exige `contextvars` para não reabrir o furo de
-> multi-tenancy, reservado para quando a escala exigir.
+O modo subprocesso **permanece** como default fora do deploy: é como o
+`vetflow-mcp` serve o **Claude Desktop** e outros clientes stdio, e dá
+isolamento por processo "de graça" para quem roda local. A diferença é só qual
+modo é o padrão em cada ambiente.
+
+> **Resumo:** in-process = enxuto, isolamento por `contextvars`, **em produção
+> hoje** (`VETFLOW_MCP_INPROCESS=true` no `render.yaml`). Subprocesso = mais RAM,
+> isolamento por processo grátis, default local e o que o Claude Desktop usa.
 
 ## Degradação graciosa (sem backend / sem chave)
 
