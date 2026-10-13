@@ -183,6 +183,29 @@ As credenciais de LLM podem vir do ambiente (acima, **só em execução local**)
 deploy). São carregadas no topo do `api.py` antes de importar o agente, para
 chegarem também ao MCP.
 
+### Ordem de import: `load_dotenv()` **antes** de `import litellm`
+
+No topo do `api.py` a ordem é deliberada e **não deve ser trocada**:
+
+```python
+load_dotenv()      # 1. popula os.environ com o que está no .env
+import litellm      # 2. agora o litellm lê um os.environ já completo
+```
+
+O **LiteLLM lê variáveis de ambiente no momento do `import`** — ao carregar, o
+módulo popula estado interno (chaves de provider, flags de config) a partir do
+`os.environ`. Se o `import litellm` rodasse **antes** do `load_dotenv()`, ele
+leria um ambiente onde as variáveis do `.env` ainda não existem, e qualquer
+configuração vinda do `.env` seria perdida. Por isso o import vem logo **depois**
+da leitura do env (e carrega o `# noqa: E402` do ruff, que de outro modo
+reclamaria do import fora do topo do arquivo).
+
+> O `import litellm` também é feito no **topo do módulo**, nunca dentro de um
+> handler async — ver *["Por que `import litellm` no topo do módulo"](#por-que-import-litellm-no-topo-do-módulo)* abaixo. A ordem (depois do env) e a posição (topo
+> do módulo) são duas exigências distintas: a primeira é sobre **corretude** (o
+> litellm enxergar o `.env`), a segunda sobre **performance** (não bloquear o
+> event loop por request).
+
 ## Deploy (Render)
 
 Há um blueprint em [`render.yaml`](./render.yaml) para publicar a API no
@@ -238,19 +261,54 @@ O `mcp_bridge.py` suporta **dois modos**, selecionados pela env
 
 **RAM de pico no plano free.** No subprocesso, durante uma chamada de ferramenta
 **dois interpretadores Python coexistem** — o do agente (FastAPI + LiteLLM) e o
-do MCP (~80MB extra). No free tier do Render (**512MB**) isso chegava perto do
-teto e causou **OOM-kill** (`502` com header `x-render-routing: no-deploy`, logs
-subindo → `Shutting down` sem traceback → reiniciar). O in-process elimina o
-segundo interpretador e é o que estabilizou o serviço no free tier.
+do MCP (~80MB extra). No free tier do Render (**512MB**) isso aproxima do teto;
+o in-process elimina o segundo interpretador e deixa o perfil de memória
+folgado. Uma medição posterior do caminho real (LiteLLM + `get_valid_models`
+batendo na API do provider + MCP) marcou **pico de ~192MB de 512** — ou seja, no
+modo in-process a RAM **não** é o fator limitante.
+
+> **Correção de diagnóstico (histórico).** Um restart recorrente do worker
+> (`Shutting down` sem traceback, `502`) chegou a ser atribuído a **OOM-kill**
+> por essa coexistência de interpretadores. A medição acima
+> (**192MB < 512MB**) **refutou** o OOM. A causa real era outra: `import litellm`
+> custa ~7s no primeiro load e estava sendo feito **dentro de handlers async** —
+> ver *["Por que `import litellm` no topo do módulo"](#por-que-import-litellm-no-topo-do-módulo)*. O in-process segue valendo pelo
+> perfil de memória, mas não é ele que resolve o restart.
 
 Duas mudanças anteriores já tinham aliviado o pico e seguem valendo:
 
-- **fail-fast de provider:** `run_agent` resolve o provider *antes* de importar
-  o LiteLLM e abrir o MCP — uma request sem provider não carrega os dois pesos à
-  toa;
+- **fail-fast de provider:** `run_agent` resolve o provider *antes* de abrir o
+  MCP — uma request sem provider não levanta o MCP à toa;
 - **runtime enxuto:** o `streamlit` saiu do `requirements.txt` de deploy (ele
   arrasta pandas/pyarrow/numpy/altair, que a API nunca importa) e foi para o
   `requirements-dev.txt`.
+
+### Por que `import litellm` no topo do módulo
+
+`import litellm` é **caro**: ~7s de CPU no primeiro load (carrega centenas de
+submódulos). Por isso ele é feito **no topo** de `api.py` e de `core/agent.py` —
+isto é, no **load do processo** —, e **nunca dentro de um handler async**.
+
+O motivo é o modelo de concorrência do deploy: o `render.yaml` sobe
+`uvicorn ... --port $PORT` **sem `--workers`**, ou seja, **um único worker com um
+único event loop**. Um `import litellm` feito dentro de uma coroutine
+(`POST /chat` ou `POST /providers/models`) **bloqueia o event loop por ~7s** na
+primeira request — e durante esse tempo o `GET /health` para de responder. O
+Render marca o serviço como *unhealthy* e **mata + reinicia o worker**
+(`Shutting down` sem OOM e sem deploy — o sintoma que confundiu o diagnóstico de
+OOM acima).
+
+Pagando o custo no **boot** do processo, a porta do uvicorn só abre **depois** de
+o import terminar, então o health check sequer começou durante os ~7s. Como o
+`litellm` é dependência de runtime obrigatória (`requirements.txt`/`pyproject`),
+um `ImportError` no topo falha o deploy (fail-fast) — melhor do que virar erro
+silencioso por request.
+
+> **Regra geral:** em app com 1 worker, mantenha imports pesados (e qualquer
+> trabalho síncrono longo) **fora** dos handlers async; faça-os no load do
+> módulo ou delegue a `run_in_threadpool`. O `run_in_threadpool` protege só a
+> chamada que ele embrulha — um `import` feito antes dele, no mesmo corpo async,
+> continua bloqueando o loop.
 
 ### Como o in-process preserva o isolamento de multi-tenancy
 
