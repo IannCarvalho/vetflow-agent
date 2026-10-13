@@ -4,13 +4,13 @@
 
 Agente de IA **multi-provider** que responde perguntas em linguagem natural
 sobre uma clínica veterinária, usando as ferramentas do servidor MCP
-[`vetflow-mcp`](../vetflow-mcp) para consultar **dados reais** antes de
+[`vetflow-mcp`](https://github.com/IannCarvalho/vetflow-mcp) para consultar **dados reais** antes de
 responder ("quais vacinas vencem esse mês?", "quantos pets a Maria tem?").
 
 Expõe **duas interfaces**:
 
 - **API HTTP** (`src/vetflow_agent/api/api.py`, FastAPI) — consumida pelo widget
-  de chat do [`vetflow-frontend`](../vetflow-frontend). É o caminho "produto".
+  de chat do [`vetflow-frontend`](https://github.com/IannCarvalho/vetflow-frontend). É o caminho "produto".
 - **UI Streamlit** (`src/vetflow_agent/ui/app.py`) — um app de chat autocontido,
   útil para testes rápidos sem o frontend.
 
