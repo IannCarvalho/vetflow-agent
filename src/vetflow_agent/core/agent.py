@@ -20,6 +20,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+# litellm é importado no load do módulo (startup do processo), NÃO dentro de
+# run_agent: `import litellm` custa ~7s no 1o load e, feito numa coroutine,
+# bloqueia o event loop por esse tempo — com 1 worker o /health trava e a
+# plataforma reinicia o processo. Dependência de runtime obrigatória, então um
+# ImportError aqui deve falhar o deploy (fail-fast), não virar erro por request.
+import litellm
+
 from .mcp_bridge import (
     MCPConnectionError,
     connect_session,
@@ -182,11 +189,13 @@ async def run_agent(
     `user_token` é o JWT do usuário logado (pass-through): repassado ao MCP para
     que ele aja como esse usuário, em vez de uma conta de serviço.
     """
-    # Fail-fast de provider ANTES de carregar pesos (LiteLLM + subprocesso MCP).
-    # Sem credencial de LLM não há como responder; resolver o provider primeiro
-    # evita importar o LiteLLM e levantar o MCP à toa — o que, somado, estoura a
-    # RAM no plano free (causa de OOM/502). Esta checagem é barata (só inspeciona
-    # o ambiente/.aws, não fala com provider nenhum).
+    # Fail-fast de provider ANTES de abrir a sessão MCP: sem credencial de LLM
+    # não há como responder, então resolver o provider primeiro evita levantar o
+    # MCP à toa. Checagem barata (só inspeciona o ambiente/.aws, não fala com
+    # provider nenhum). O custo pesado — `import litellm`, ~7s no 1o load — já
+    # foi pago no load do módulo (ver import no topo), e NÃO aqui dentro da
+    # coroutine, para não bloquear o event loop (causa do restart do worker no
+    # plano free: /health trava e o Render reinicia).
     try:
         selection = select_model_with_overrides(model=model, api_key=api_key)
     except ProviderUnavailable as exc:
@@ -197,15 +206,6 @@ async def run_agent(
                 "Nenhum provider de LLM configurado. Informe uma API key no chat "
                 f"(BYOK) ou configure o servidor. Detalhe: {exc}"
             ),
-        )
-
-    try:
-        import litellm
-    except ImportError:
-        return AgentResult(
-            text="",
-            ok=False,
-            error="Pacote 'litellm' não instalado. Rode: pip install -r requirements.txt",
         )
 
     tool_calls: list[dict[str, Any]] = []

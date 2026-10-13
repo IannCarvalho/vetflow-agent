@@ -30,6 +30,16 @@ from dotenv import load_dotenv
 # AWS e VETFLOW_* cheguem também ao subprocesso MCP.
 load_dotenv()
 
+# litellm é importado AQUI, no load do módulo (startup do processo), e NÃO
+# dentro dos handlers: `import litellm` custa ~7s no primeiro load, e feito
+# dentro de uma coroutine ele BLOQUEIA o event loop por esse tempo — com 1
+# worker (uvicorn sem --workers no plano free do Render) o /health para de
+# responder e a plataforma mata+reinicia o worker ("Shutting down" sem OOM nem
+# deploy). Pagando o custo no boot, a porta só abre depois do import, então o
+# health check nem começou. É dependência de runtime obrigatória
+# (requirements.txt), então um ImportError aqui deve falhar o deploy (fail-fast),
+# não virar erro silencioso por request.
+import litellm  # noqa: E402
 from fastapi import FastAPI, Request  # noqa: E402 - após load_dotenv
 from fastapi.concurrency import run_in_threadpool  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
@@ -136,11 +146,6 @@ async def list_models(req: ModelsRequest) -> dict:
     de listagem do provider -- não gera tokens. A key vem no request (BYOK), é
     usada só para esta chamada e NÃO é persistida nem logada.
     """
-    try:
-        import litellm
-    except ImportError:
-        return {"ok": False, "models": [], "error": "litellm não instalado."}
-
     try:
         models = await run_in_threadpool(
             litellm.get_valid_models,
