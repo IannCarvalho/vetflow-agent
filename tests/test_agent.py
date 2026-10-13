@@ -27,6 +27,11 @@ def _install_litellm_stub(monkeypatch, responses):
         return resp
 
     mod.acompletion = acompletion
+    # litellm agora é importado no TOPO de agent.py (para não bloquear o event
+    # loop por request), então `agent.litellm` já aponta para o módulo real. Para
+    # o stub valer, patcheamos o atributo ONDE ele é usado (agent.litellm) — não
+    # basta trocar sys.modules, que só afetaria um `import litellm` feito depois.
+    monkeypatch.setattr(agent, "litellm", mod)
     monkeypatch.setitem(sys.modules, "litellm", mod)
     return state
 
