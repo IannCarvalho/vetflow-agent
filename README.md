@@ -342,6 +342,11 @@ O app foi feito para **não quebrar** quando falta configuração:
   `ExceptionGroup` do anyio até a causa real, traduzindo tudo para uma mensagem
   amigável em PT-BR (ex.: *"Variáveis de ambiente obrigatórias ausentes:
   ..."*) exibida com `st.error`. Nenhum traceback cru aparece.
+- **Erro do provider de LLM** (key inválida, cota estourada, modelo
+  inexistente): chega como *"Erro ao chamar o modelo (AuthenticationError):
+  ..."*. Só falhas de conexão com o MCP viram erro de MCP; um erro levantado
+  durante a conversa sobe com o tipo original, sem mandar o usuário conferir
+  o backend quando o problema é a key.
 
 ## Nota sobre o fluxo end-to-end
 
