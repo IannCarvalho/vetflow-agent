@@ -5,15 +5,19 @@ VetFlow consumir. O Streamlit continua existindo como UI alternativa; esta API �
 o caminho "produto": o React do VetFlow chama `POST /chat` e renderiza o chat
 com a identidade visual dele.
 
-Endpoints:
-- GET  /health     -> status do serviço + provider ativo.
-- GET  /providers  -> qual LLM será usado (sem revelar segredos).
-- POST /chat        -> {message, history?} -> {ok, text, tool_calls, error}.
+Endpoints (contrato completo no README, seção "Contrato da API"):
+- GET  /health            -> status do serviço + se há provider utilizável.
+- GET  /providers         -> qual LLM será usado (sem revelar segredos).
+- POST /providers/models  -> {provider, api_key} -> modelos de chat da key (BYOK).
+- POST /chat              -> {message, history?, model?, api_key?} ->
+                             {ok, text, tool_calls, error}. O JWT do usuário
+                             vem no header Authorization (pass-through).
 
-Modelo de concorrência: cada /chat abre sua própria sessão MCP (subprocesso
-stdio) via run_agent e a fecha ao terminar. Simples e seguro para uso de
-portfólio; um pool de sessões persistentes é uma otimização futura, necessária
-só sob carga concorrente real.
+Modelo de concorrência: cada /chat abre a própria sessão MCP via run_agent e a
+fecha ao terminar. No deploy a sessão é in-process (VETFLOW_MCP_INPROCESS=true),
+com o token escopado à request; localmente o default é um subprocesso stdio por
+request. Um pool de sessões persistentes só faria sentido sob carga concorrente
+real.
 
 Config por ambiente:
 - CORS_ORIGINS: lista separada por vírgula de origens permitidas
