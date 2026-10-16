@@ -92,14 +92,19 @@ class ChatResponse(BaseModel):
     error: str | None = None
 
 
+# /health e /providers são `def` (não `async def`) DE PROPÓSITO: o FastAPI roda
+# handlers síncronos no threadpool. Eles consultam a cadeia de credencial AWS
+# (provider_available), que fora da AWS espera o timeout do IMDS (~2s) até o
+# cache esquentar — dentro do event loop, isso travava toda request concorrente,
+# incluindo o /chat, a cada health check do Render.
 @app.get("/health")
-async def health() -> dict:
+def health() -> dict:
     """Status do serviço + se há provider utilizável."""
     return {"status": "ok", "provider_available": provider_available()}
 
 
 @app.get("/providers")
-async def providers() -> dict:
+def providers() -> dict:
     """Qual LLM será usado (rótulo legível, sem segredos)."""
     return {"available": provider_available(), "provider": describe_provider()}
 

@@ -6,7 +6,9 @@ nenhum subprocesso, nenhuma chave real.
 
 from __future__ import annotations
 
+import asyncio
 import sys
+import threading
 import types
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -84,6 +86,29 @@ async def test_run_agent_sem_provider_retorna_ok_false_sem_levantar(monkeypatch)
     assert isinstance(result, AgentResult)
     assert result.ok is False
     assert "provider de LLM" in (result.error or "")
+
+
+async def test_run_agent_resolve_provider_fora_do_event_loop(monkeypatch):
+    """Sem BYOK, a cascata pode consultar o boto3 (~2s fora da AWS): numa thread,
+    o loop segue livre. O select fica preso num Event até o teste liberá-lo."""
+    from vetflow_agent.core.provider import ProviderUnavailable
+
+    gate = threading.Event()
+    liberado: list[bool] = []
+
+    def _sel_lento(model=None, api_key=None):
+        liberado.append(gate.wait(timeout=2))
+        raise ProviderUnavailable("nenhum")
+
+    monkeypatch.setattr(agent, "select_model_with_overrides", _sel_lento)
+
+    task = asyncio.create_task(run_agent("oi"))
+    await asyncio.sleep(0.05)  # com o loop travado, só voltaria após o timeout
+    gate.set()
+    result = await task
+
+    assert result.ok is False
+    assert liberado == [True]
 
 
 # --------------------------------------------------------------------------- #

@@ -20,6 +20,7 @@ Isto NÃO fala com nenhum provider; só inspeciona o ambiente e o `.aws`.
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 
 # Modelos default por provider (editáveis por env se o usuário quiser outro).
@@ -61,14 +62,43 @@ def _has_gemini_key() -> bool:
     )
 
 
+# Cache do probe de credencial AWS: perfil -> (instante da consulta, resultado).
+_AWS_PROBE_TTL_S = 300.0
+_aws_probe_cache: dict[str | None, tuple[float, bool]] = {}
+
+
 def _aws_credentials_available() -> bool:
-    """True se o boto3 resolver credenciais AWS (perfil default, AWS_*, SSO...)."""
+    """True se o boto3 resolver credenciais AWS (perfil default, AWS_*, SSO...).
+
+    O resultado fica em cache por perfil durante `_AWS_PROBE_TTL_S`: o probe é
+    caro fora da AWS (ver `_probe_aws_credentials`), e /health e /providers o
+    disparam a cada request.
+    """
+    profile = os.environ.get("AWS_PROFILE") or None
+    cached = _aws_probe_cache.get(profile)
+    if cached is not None and time.monotonic() - cached[0] < _AWS_PROBE_TTL_S:
+        return cached[1]
+    available = _probe_aws_credentials(profile)
+    _aws_probe_cache[profile] = (time.monotonic(), available)
+    return available
+
+
+def _probe_aws_credentials(profile: str | None) -> bool:
+    """Pergunta à cadeia de credenciais do boto3 se há alguma utilizável.
+
+    Num host FORA da AWS (o Render, por exemplo), sem ~/.aws nem AWS_*, a cadeia
+    termina no IMDS (169.254.169.254), que não responde: o boto3 espera o
+    timeout de 1s no pedido de token e de novo no de credencial, ~2s por
+    chamada. Medido no deploy: /health levava ~2s e /providers ~4s. A cadeia
+    pode ganhar ou perder credencial com o processo no ar (`aws sso login`,
+    `aws configure`), daí o cache com TTL e não para sempre.
+    """
     try:
         import boto3
     except ImportError:
         return False
     try:
-        session = boto3.session.Session(profile_name=os.environ.get("AWS_PROFILE") or None)
+        session = boto3.session.Session(profile_name=profile)
         return session.get_credentials() is not None
     except Exception:  # noqa: BLE001 - perfil inválido / sem credencial = indisponível
         return False

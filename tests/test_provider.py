@@ -72,3 +72,51 @@ def test_sem_nada_levanta_e_provider_available_false(monkeypatch):
     with pytest.raises(provider.ProviderUnavailable):
         provider.select_model()
     assert provider.provider_available() is False
+
+
+# --------------------------------------------------------------------------- #
+# Cache do probe de credencial AWS
+#
+# Fora da AWS o probe espera o timeout do IMDS (~2s por chamada, medido no
+# Render), e /health e /providers o chamam a cada request.
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def probe_contado(monkeypatch):
+    """Substitui o probe real (boto3) por um contador; começa com cache vazio."""
+    provider._aws_probe_cache.clear()
+    chamadas: list[str | None] = []
+
+    def fake_probe(profile):
+        chamadas.append(profile)
+        return True
+
+    monkeypatch.setattr(provider, "_probe_aws_credentials", fake_probe)
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    yield chamadas
+    provider._aws_probe_cache.clear()
+
+
+def test_probe_aws_fica_em_cache(probe_contado):
+    assert provider._aws_credentials_available() is True
+    assert provider._aws_credentials_available() is True
+    assert probe_contado == [None]  # só a primeira chamada consulta o boto3
+
+
+def test_probe_aws_expira_depois_do_ttl(probe_contado, monkeypatch):
+    agora = [1000.0]
+    monkeypatch.setattr(provider.time, "monotonic", lambda: agora[0])
+
+    provider._aws_credentials_available()
+    agora[0] += provider._AWS_PROBE_TTL_S - 1
+    provider._aws_credentials_available()  # ainda dentro do TTL
+    agora[0] += 2
+    provider._aws_credentials_available()  # expirou: consulta de novo
+
+    assert len(probe_contado) == 2
+
+
+def test_probe_aws_cache_separado_por_perfil(probe_contado, monkeypatch):
+    provider._aws_credentials_available()
+    monkeypatch.setenv("AWS_PROFILE", "outro")
+    provider._aws_credentials_available()
+    assert probe_contado == [None, "outro"]

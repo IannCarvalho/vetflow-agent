@@ -310,6 +310,25 @@ silencioso por request.
 > chamada que ele embrulha — um `import` feito antes dele, no mesmo corpo async,
 > continua bloqueando o loop.
 
+### O probe de credencial AWS no `/health`
+
+`provider_available()` passa pela cadeia de credenciais do boto3 (é o que
+detecta o Bedrock). Num host **fora da AWS**, como o Render, essa cadeia termina
+no IMDS (`169.254.169.254`), que não responde: o boto3 espera o timeout de 1s
+duas vezes. Medido no deploy, `/health` levava **~2s** e `/providers` **~4s**
+(chama o probe duas vezes), e como os handlers eram `async def` o event loop
+ficava travado esse tempo inteiro. Uma request leve disparada junto com um
+`/health` esperava 2–3s; cada health check do Render atrasava o `/chat` de todo
+mundo.
+
+Duas defesas, aplicadas juntas:
+
+- **cache do probe** por perfil (`AWS_PROFILE`), com TTL de 5 min: depois da
+  primeira consulta, `/health` e `/providers` respondem sem tocar no boto3;
+- **fora do event loop**: `/health` e `/providers` são `def` (o FastAPI os roda
+  no threadpool) e o `run_agent` resolve o provider com `asyncio.to_thread`, então
+  nem a consulta fria (~2s) trava o loop.
+
 ### Como o in-process preserva o isolamento de multi-tenancy
 
 O risco do in-process é o estado compartilhado: o `server.py` do MCP usava um
