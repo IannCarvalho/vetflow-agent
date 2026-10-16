@@ -301,6 +301,10 @@ Pontos do deploy:
 - **Variáveis a preencher:** apenas `CORS_ORIGINS` (a URL do frontend no Vercel).
   `VETFLOW_BASE_URL` já vem no blueprint. **Não há `VETFLOW_EMAIL/PASSWORD`**: a
   auth é pass-through (o JWT do usuário logado chega pelo header do `/chat`).
+- **`AWS_EC2_METADATA_DISABLED=true`** (já no blueprint): o Render não é EC2, e
+  sem ela cada consulta à cadeia de credenciais da AWS — feita pelo `/health` e
+  pelo `/providers` para detectar o Bedrock — esperava ~2s pelo IMDS, que não
+  responde. Com ela, a consulta leva ~0,05s, com o mesmo resultado.
 - **Frontend:** defina `VITE_AGENT_API_URL` (no Vercel) com a URL pública da API
   do agente no Render, para o widget encontrá-la em produção.
 
