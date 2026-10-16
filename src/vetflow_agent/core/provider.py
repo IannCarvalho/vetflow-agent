@@ -5,10 +5,10 @@ decidimos QUAL `model` string passar e garantimos que exista credencial para
 ele; o loop em agent.py não precisa saber de qual provider se trata.
 
 Como o provider é escolhido:
-1. Se `LLM_MODEL` estiver definido, ele manda (ex.: "gpt-4o",
-   "claude-3-5-sonnet-latest", "gemini/gemini-1.5-pro",
-   "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0"). Validamos que a
-   credencial do provider correspondente existe.
+1. Se `LLM_MODEL` estiver definido, ele manda (ex.: "gpt-6-luna",
+   "claude-sonnet-5-5", "gemini/gemini-3.8-flash",
+   "bedrock/us.anthropic.claude-sonnet-5-5"). Validamos que a credencial do
+   provider correspondente existe.
 2. Senão, auto-detecção pela credencial presente, nesta ordem de preferência:
    Anthropic (ANTHROPIC_API_KEY) -> OpenAI (OPENAI_API_KEY) ->
    Gemini (GEMINI_API_KEY/GOOGLE_API_KEY) -> Bedrock (perfil .aws default).
@@ -24,12 +24,15 @@ import time
 from dataclasses import dataclass
 
 # Modelos default por provider (editáveis por env se o usuário quiser outro).
-DEFAULT_ANTHROPIC = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest")
-DEFAULT_OPENAI = os.environ.get("OPENAI_MODEL", "gpt-4o")
-DEFAULT_GEMINI = os.environ.get("GEMINI_MODEL", "gemini/gemini-1.5-pro")
-DEFAULT_BEDROCK = os.environ.get(
-    "BEDROCK_MODEL_ID", "bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0"
-)
+# Só valem para a execução local sem BYOK: no deploy o modelo vem do request.
+# Precisam existir no registro do litellm instalado; o teste
+# `test_defaults_sao_reconhecidos_pelo_litellm` acusa quando um deles sai de lá.
+DEFAULT_ANTHROPIC = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5-5")
+DEFAULT_OPENAI = os.environ.get("OPENAI_MODEL", "gpt-6-luna")
+DEFAULT_GEMINI = os.environ.get("GEMINI_MODEL", "gemini/gemini-3.8-flash")
+# Bedrock exige um inference profile (prefixo de região): os IDs on-demand
+# antigos, como anthropic.claude-3-5-sonnet-20241022-v2:0, foram aposentados.
+DEFAULT_BEDROCK = os.environ.get("BEDROCK_MODEL_ID", "bedrock/us.anthropic.claude-sonnet-5-5")
 
 
 class ProviderUnavailable(RuntimeError):
@@ -104,6 +107,11 @@ def _probe_aws_credentials(profile: str | None) -> bool:
         return False
 
 
+def _is_openai_o_series(m: str) -> bool:
+    """Modelos de raciocínio da OpenAI: o1, o3, o3-mini, o4-mini..."""
+    return m[:1] == "o" and m[1:2].isdigit()
+
+
 def _provider_of_model(model: str) -> str:
     """Infere o provider a partir da string de modelo do LiteLLM."""
     m = model.lower()
@@ -111,7 +119,7 @@ def _provider_of_model(model: str) -> str:
         return "bedrock"
     if m.startswith("gemini/") or m.startswith("google") or "gemini" in m:
         return "gemini"
-    if m.startswith("gpt") or m.startswith("openai/") or m.startswith("o1") or m.startswith("o3"):
+    if m.startswith(("gpt", "openai/")) or _is_openai_o_series(m):
         return "openai"
     # claude-*, anthropic/* e o resto tratamos como Anthropic (API direta).
     return "anthropic"
