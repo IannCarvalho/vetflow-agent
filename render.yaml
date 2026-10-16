@@ -39,6 +39,14 @@ services:
       # modo subprocesso continua sendo o default fora do deploy (Claude Desktop).
       - key: VETFLOW_MCP_INPROCESS
         value: "true"
+      # Desliga o IMDS (metadata da EC2) no boto3: o Render não é EC2. Sem isto, a
+      # cadeia de credenciais da AWS, consultada pelo /health e pelo /providers
+      # para detectar o Bedrock, termina no IMDS, que não responde, e espera ~2s
+      # de timeout a cada consulta. Medido: 2,10s -> 0,05s, mesmo resultado (sem
+      # credencial). Credencial AWS por env (AWS_ACCESS_KEY_ID...) continuaria
+      # funcionando: ela vem antes do IMDS na cadeia.
+      - key: AWS_EC2_METADATA_DISABLED
+        value: "true"
       # BYOK para o LLM: nenhuma ANTHROPIC/OPENAI/GEMINI/AWS key aqui de propósito.
       # O provider/modelo vêm por request (a key do usuário, no navegador dele).
       #
