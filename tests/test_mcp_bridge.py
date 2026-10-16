@@ -7,6 +7,10 @@ call_tool assíncrono.
 
 from __future__ import annotations
 
+import asyncio
+import sys
+import types
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
@@ -18,6 +22,7 @@ try:  # pragma: no cover - caminho depende da versão do Python
 except NameError:  # pragma: no cover
     from exceptiongroup import ExceptionGroup  # type: ignore[no-redef]
 
+from vetflow_agent.core import mcp_bridge
 from vetflow_agent.core.mcp_bridge import (
     MCPConnectionError,
     _check_required_env,
@@ -261,3 +266,132 @@ async def test_inprocess_session_funciona_com_os_helpers_do_bridge():
     assert text == "ok:buscar_cliente"
     assert is_error is False
     assert server.calls == [("buscar_cliente", {"nome": "ana"})]
+
+
+# --------------------------------------------------------------------------- #
+# connect_session: erro do CORPO x falha de CONEXÃO
+#
+# Regressão: qualquer exceção levantada DENTRO do `async with connect_session()`
+# (ex.: o LLM recusando a API key) era convertida em MCPConnectionError, com a
+# mensagem "verifique as VETFLOW_* e o backend". E o `except BaseException`
+# engolia o cancelamento. Só a conexão deve virar MCPConnectionError.
+# --------------------------------------------------------------------------- #
+class _ErroDoLLM(Exception):
+    """Simula um erro do provider (ex.: litellm.AuthenticationError)."""
+
+
+def _fake_vetflow_mcp(monkeypatch, *, enter_exc=None, exit_exc=None):
+    """Pacote vetflow_mcp falso em sys.modules, para o modo in-process."""
+    server_mod = types.ModuleType("vetflow_mcp.server")
+    server_mod.mcp = _FakeInProcessServer()
+
+    @asynccontextmanager
+    async def use_request_client(token=None):
+        if enter_exc is not None:
+            raise enter_exc
+        yield object()
+        if exit_exc is not None:
+            raise exit_exc
+
+    server_mod.use_request_client = use_request_client
+    package = types.ModuleType("vetflow_mcp")
+    package.server = server_mod
+    monkeypatch.setitem(sys.modules, "vetflow_mcp", package)
+    monkeypatch.setitem(sys.modules, "vetflow_mcp.server", server_mod)
+    monkeypatch.setenv("VETFLOW_MCP_INPROCESS", "true")
+    monkeypatch.setenv("VETFLOW_BASE_URL", "http://backend.test")
+
+
+def _fake_stdio(monkeypatch, *, initialize_exc=None):
+    """stdio_client/ClientSession falsos que embrulham erros como o anyio faz."""
+
+    @asynccontextmanager
+    async def fake_stdio_client(params, errlog=None):
+        try:
+            yield ("read", "write")
+        except Exception as exc:
+            # O anyio devolve o erro do corpo dentro de ExceptionGroups aninhados.
+            raise ExceptionGroup(
+                "unhandled errors in a TaskGroup", [ExceptionGroup("inner", [exc])]
+            ) from None
+
+    class FakeClientSession:
+        def __init__(self, read, write):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+        async def initialize(self):
+            if initialize_exc is not None:
+                raise initialize_exc
+
+    monkeypatch.setattr(mcp_bridge, "stdio_client", fake_stdio_client)
+    monkeypatch.setattr(mcp_bridge, "ClientSession", FakeClientSession)
+    monkeypatch.setenv("VETFLOW_MCP_INPROCESS", "false")
+    monkeypatch.setenv("VETFLOW_BASE_URL", "http://backend.test")
+
+
+async def test_inprocess_erro_do_corpo_sobe_intacto(monkeypatch):
+    _fake_vetflow_mcp(monkeypatch)
+    with pytest.raises(_ErroDoLLM, match="key inválida"):
+        async with mcp_bridge.connect_session(user_token="jwt"):
+            raise _ErroDoLLM("key inválida")
+
+
+async def test_inprocess_falha_ao_abrir_vira_mcpconnectionerror(monkeypatch):
+    _fake_vetflow_mcp(monkeypatch, enter_exc=RuntimeError("backend fora do ar"))
+    with pytest.raises(MCPConnectionError, match="backend fora do ar"):
+        async with mcp_bridge.connect_session(user_token="jwt"):
+            pass  # pragma: no cover - não chega aqui
+
+
+async def test_inprocess_falha_ao_fechar_vira_mcpconnectionerror(monkeypatch):
+    _fake_vetflow_mcp(monkeypatch, exit_exc=RuntimeError("aclose falhou"))
+    with pytest.raises(MCPConnectionError, match="aclose falhou"):
+        async with mcp_bridge.connect_session(user_token="jwt"):
+            pass
+
+
+async def test_inprocess_cancelamento_propaga(monkeypatch):
+    _fake_vetflow_mcp(monkeypatch)
+
+    async def usa_a_sessao():
+        async with mcp_bridge.connect_session(user_token="jwt"):
+            await asyncio.sleep(30)
+
+    task = asyncio.create_task(usa_a_sessao())
+    await asyncio.sleep(0.01)  # deixa a task entrar na sessão e parar no sleep
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_subprocesso_erro_do_corpo_sai_desembrulhado(monkeypatch):
+    """O chamador recebe o erro real, não o ExceptionGroup do anyio."""
+    _fake_stdio(monkeypatch)
+    with pytest.raises(_ErroDoLLM, match="key inválida"):
+        async with mcp_bridge.connect_session(user_token="jwt"):
+            raise _ErroDoLLM("key inválida")
+
+
+async def test_subprocesso_falha_no_initialize_vira_mcpconnectionerror(monkeypatch):
+    _fake_stdio(monkeypatch, initialize_exc=RuntimeError("o filho morreu"))
+    with pytest.raises(MCPConnectionError) as exc_info:
+        async with mcp_bridge.connect_session(user_token="jwt"):
+            pass  # pragma: no cover - não chega aqui
+    assert exc_info.value.detail == "o filho morreu"
+
+
+async def test_list_tools_falha_vira_mcpconnectionerror():
+    """Agora que o corpo propaga cru, a listagem precisa se classificar sozinha."""
+
+    class SessaoQuebrada:
+        async def list_tools(self):
+            raise ExceptionGroup("unhandled errors in a TaskGroup", [EOFError("pipe fechado")])
+
+    with pytest.raises(MCPConnectionError, match="pipe fechado"):
+        await mcp_bridge.list_tools(SessaoQuebrada())

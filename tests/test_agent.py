@@ -165,5 +165,46 @@ async def test_run_agent_parsa_argumentos_json(monkeypatch):
     assert captured["args"] == {"nome": "Maria"}
 
 
+async def test_run_agent_erro_do_llm_nao_vira_erro_de_mcp(monkeypatch):
+    """Regressão: com o connect_session REAL (in-process), um erro do provider
+    no meio do loop era reportado como falha do vetflow-mcp/backend."""
+
+    class AuthenticationError(Exception):
+        pass
+
+    async def acompletion(**kwargs):
+        raise AuthenticationError("Incorrect API key provided")
+
+    stub = types.ModuleType("litellm")
+    stub.acompletion = acompletion
+    monkeypatch.setattr(agent, "litellm", stub)
+
+    # vetflow_mcp falso, só o necessário para o modo in-process abrir a sessão.
+    server_mod = types.ModuleType("vetflow_mcp.server")
+
+    async def list_tools():
+        return []
+
+    server_mod.mcp = SimpleNamespace(list_tools=list_tools)
+
+    @asynccontextmanager
+    async def use_request_client(token=None):
+        yield object()
+
+    server_mod.use_request_client = use_request_client
+    package = types.ModuleType("vetflow_mcp")
+    package.server = server_mod
+    monkeypatch.setitem(sys.modules, "vetflow_mcp", package)
+    monkeypatch.setitem(sys.modules, "vetflow_mcp.server", server_mod)
+    monkeypatch.setenv("VETFLOW_MCP_INPROCESS", "true")
+    monkeypatch.setenv("VETFLOW_BASE_URL", "http://backend.test")
+
+    result = await run_agent("oi", model="gpt-4o", api_key="sk-invalida", user_token="jwt")
+
+    assert result.ok is False
+    assert result.error.startswith("Erro ao chamar o modelo (AuthenticationError)")
+    assert "vetflow-mcp" not in result.error
+
+
 async def _async_return(value):
     return value

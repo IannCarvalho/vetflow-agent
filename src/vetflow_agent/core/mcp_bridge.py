@@ -19,7 +19,7 @@ import tempfile
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, NoReturn
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -124,6 +124,23 @@ def _friendly_detail(leaf: BaseException, stderr_text: str) -> str:
     return leaf_str or leaf.__class__.__name__
 
 
+def _reraise_body_error(exc: Exception) -> NoReturn:
+    """Repropaga um erro do CORPO do `async with connect_session()`.
+
+    Um erro levantado por quem USA a sessão (ex.: o LLM recusou a API key) não é
+    falha de conexão com o MCP e não pode virar MCPConnectionError. Antes, a
+    mensagem mandava o usuário conferir as VETFLOW_* e o backend quando o
+    problema era a key. No modo subprocesso o anyio (stdio_client/ClientSession)
+    embrulha a exceção em ExceptionGroups aninhados, então desembrulhamos para o
+    chamador receber o tipo real (ex.: litellm.AuthenticationError). No modo
+    in-process ela já chega crua e sobe intacta.
+    """
+    leaf = _unwrap_exception(exc)
+    if leaf is exc:
+        raise exc
+    raise leaf from None
+
+
 @asynccontextmanager
 async def connect_session(user_token: str | None = None):
     """Context manager assíncrono que cede uma ClientSession inicializada.
@@ -147,7 +164,10 @@ async def connect_session(user_token: str | None = None):
       Modo histórico, idêntico ao do Claude Desktop. Mais isolado (um crash do
       MCP não derruba a API), ao custo de um segundo interpretador residente.
 
-    Qualquer falha vira `MCPConnectionError` com mensagem amigável em PT-BR.
+    Falhas da CONEXÃO (abrir, inicializar ou fechar a sessão) viram
+    `MCPConnectionError` com mensagem amigável em PT-BR. Um erro levantado por
+    quem USA a sessão (ex.: o LLM recusou a key) sobe com o tipo original, e o
+    cancelamento propaga normalmente.
     """
     if _inprocess_enabled():
         async with _connect_inprocess(user_token) as session:
@@ -202,15 +222,24 @@ async def _connect_inprocess(user_token: str | None = None):
             detail=str(exc),
         ) from exc
 
+    # Só falhas da CONEXÃO (abrir/fechar o client) viram MCPConnectionError.
+    # `body_running` marca o trecho em que quem está rodando é o chamador: um
+    # erro ali é dele e sobe como está. `except Exception` (não BaseException)
+    # deixa o cancelamento (CancelledError) propagar em vez de virar erro.
+    body_running = False
     try:
         # use_request_client escopa o VetFlowClient (com o JWT do usuário) ao
         # contexto desta request via contextvars — isolamento por-usuário sem
         # subir processo. As tools do server resolvem esse client.
         async with mcp_server.use_request_client(token=user_token):
+            body_running = True
             yield _InProcessSession(mcp_server.mcp)
+            body_running = False
     except MCPConnectionError:
         raise
-    except BaseException as exc:  # noqa: BLE001 - traduzimos tudo em erro amigável
+    except Exception as exc:
+        if body_running:
+            _reraise_body_error(exc)
         leaf = _unwrap_exception(exc)
         detail = _friendly_detail(leaf, "")
         raise MCPConnectionError(
@@ -234,15 +263,22 @@ async def _connect_subprocess(user_token: str | None = None):
 
     # Arquivo temporário real para o stderr do filho (precisa de fileno).
     errlog = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
+    # Mesma regra do in-process: só a conexão vira MCPConnectionError; erro do
+    # corpo é do chamador, e o cancelamento propaga.
+    body_running = False
     try:
         try:
             async with stdio_client(_server_params(user_token), errlog=errlog) as (read, write):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
+                    body_running = True
                     yield session
+                    body_running = False
         except MCPConnectionError:
             raise
-        except BaseException as exc:  # noqa: BLE001 - traduzimos tudo em erro amigável
+        except Exception as exc:
+            if body_running:
+                _reraise_body_error(exc)
             leaf = _unwrap_exception(exc)
             try:
                 errlog.seek(0)
@@ -262,8 +298,20 @@ async def _connect_subprocess(user_token: str | None = None):
 
 
 async def list_tools(session: ClientSession) -> list[Any]:
-    """Lista as tools expostas pelo servidor MCP (objetos Tool do SDK)."""
-    result = await session.list_tools()
+    """Lista as tools expostas pelo servidor MCP (objetos Tool do SDK).
+
+    Falhar aqui é falha de CONEXÃO (o servidor caiu entre o initialize e a
+    listagem), então vira MCPConnectionError, e não erro do modelo.
+    """
+    try:
+        result = await session.list_tools()
+    except Exception as exc:
+        leaf = _unwrap_exception(exc)
+        detail = _friendly_detail(leaf, "")
+        raise MCPConnectionError(
+            f"Não consegui listar as ferramentas do vetflow-mcp. Causa: {detail}",
+            detail=detail,
+        ) from leaf
     return list(result.tools)
 
 
