@@ -77,12 +77,16 @@ flowchart TD
 
 O agente roda sobre **qualquer LLM** suportado pelo LiteLLM:
 
-- **Explícito:** `LLM_MODEL` no `.env` — ex. `gpt-4o`,
-  `claude-3-5-sonnet-latest`, `gemini/gemini-2.0-flash`,
-  `bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0`.
+- **Explícito:** `LLM_MODEL` no `.env` — ex. `gpt-6-luna`,
+  `claude-sonnet-5-5`, `gemini/gemini-3.8-flash`,
+  `bedrock/us.anthropic.claude-sonnet-5-5`.
 - **Automático:** sem `LLM_MODEL`, usa o primeiro provider com credencial, nesta
   ordem: `ANTHROPIC_API_KEY` → `OPENAI_API_KEY` → `GEMINI_API_KEY` →
-  **Amazon Bedrock** (perfil `.aws` default, sem declarar nada).
+  **Amazon Bedrock** (perfil `.aws` default, sem declarar nada). Cada provider
+  entra com o seu modelo default — `claude-sonnet-5-5`, `gpt-6-luna`,
+  `gemini/gemini-3.8-flash` e `bedrock/us.anthropic.claude-sonnet-5-5` —,
+  trocável por `ANTHROPIC_MODEL`, `OPENAI_MODEL`, `GEMINI_MODEL` e
+  `BEDROCK_MODEL_ID`.
 - **Por request (BYOK):** o frontend pode mandar `model`/`api_key` no `POST /chat`
   (chave do usuário, guardada só no navegador dele). Sobrescreve o padrão do
   servidor só naquela chamada.
@@ -166,7 +170,8 @@ streamlit run src/vetflow_agent/ui/app.py
 
 | Variável | Papel |
 |---|---|
-| `LLM_MODEL` | Força um modelo/provider (ex. `gpt-4o`, `gemini/gemini-2.0-flash`). Opcional — sem ela, auto-detecta. |
+| `LLM_MODEL` | Força um modelo/provider (ex. `gpt-6-luna`, `gemini/gemini-3.8-flash`). Opcional — sem ela, auto-detecta. |
+| `ANTHROPIC_MODEL` / `OPENAI_MODEL` / `GEMINI_MODEL` | Modelo de cada provider na auto-detecção (defaults em `provider.py`). **Local apenas.** |
 | `ANTHROPIC_API_KEY` | Provider Anthropic (Claude). **Local apenas** — no deploy o LLM é BYOK. |
 | `OPENAI_API_KEY` | Provider OpenAI (GPT). **Local apenas** — no deploy o LLM é BYOK. |
 | `GEMINI_API_KEY` | Provider Google (Gemini). **Local apenas** — no deploy o LLM é BYOK. |
