@@ -1,1 +1,1 @@
-﻿"""UI Streamlit alternativa (local)."""
+"""UI Streamlit alternativa (local)."""

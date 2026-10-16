@@ -1,1 +1,1 @@
-﻿"""vetflow-agent: agente de IA multi-provider sobre o vetflow-mcp."""
+"""vetflow-agent: agente de IA multi-provider sobre o vetflow-mcp."""

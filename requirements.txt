@@ -1,7 +1,9 @@
-# Dependências de runtime da API do vetflow-agent (o que o DEPLOY instala).
-# A UI Streamlit (app.py) é opcional e local — suas dependências ficam em
-# requirements-dev.txt para NÃO entrarem no servidor (streamlit arrasta
-# pandas/pyarrow/numpy/altair, dezenas de MB de RAM que a API não usa).
+# Dependências de runtime da API do vetflow-agent: espelho das `dependencies` do
+# pyproject.toml, para quem prefere `pip install -r`. O deploy (render.yaml)
+# instala pelo pyproject (`pip install .`); ao mudar uma dependência, mude nos dois.
+# A UI Streamlit (src/vetflow_agent/ui/app.py) é opcional e local — suas
+# dependências ficam em requirements-dev.txt para NÃO entrarem no servidor
+# (streamlit arrasta pandas/pyarrow/numpy/altair, dezenas de MB que a API não usa).
 # LiteLLM: uma interface (formato OpenAI) sobre Claude, GPT, Gemini, Bedrock...
 litellm>=1.50.0
 # SDKs/credenciais que o LiteLLM usa por baixo conforme o provider escolhido.
@@ -13,5 +15,6 @@ python-dotenv>=1.0.0
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 
-# O servidor MCP consumido NÃO é listado aqui. Instale-o em modo editável no
-# mesmo venv (ver README):  pip install -e ../vetflow-mcp
+# O servidor MCP consumido NÃO é listado aqui. Instale-o no mesmo venv (ver
+# README): pip install -e ./vendor/vetflow-mcp (submodule, a versão do deploy)
+# ou pip install -e ../vetflow-mcp (clone ao lado, para editar os dois juntos).

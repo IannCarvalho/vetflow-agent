@@ -6,42 +6,45 @@ on:
   pull_request:
     branches: [main]
 
+# O job só lê o código: o GITHUB_TOKEN não precisa de escrita.
+permissions:
+  contents: read
+
+# Um push novo no mesmo PR cancela o run anterior, que ficou obsoleto. Na main
+# nada é cancelado: cada commit mergeado continua com o próprio resultado.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        # 3.10 é o mínimo do requires-python; 3.14 é o default do Render para
+        # serviços Python novos.
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
     steps:
-      - name: Checkout vetflow-agent
-        uses: actions/checkout@v4
-
-      # O vetflow-agent instala o vetflow-mcp em modo editável. Em CI, cloná-lo
-      # como repositório irmão reproduz o layout local (../vetflow-mcp). O repo é
-      # privado, então usamos um token; sem ele, o passo é pulado e os testes que
-      # dependem do subprocesso real ainda assim passam (eles mockam a ponte).
-      - name: Checkout vetflow-mcp (sibling)
+      # O vetflow-mcp vem como submodule em vendor/vetflow-mcp, no commit que o
+      # deploy instala: os testes rodam contra o MCP que vai para produção.
+      - name: Checkout (com o submodule do vetflow-mcp)
         uses: actions/checkout@v4
         with:
-          repository: IannCarvalho/vetflow-mcp
-          path: vetflow-mcp
-          token: ${{ secrets.VETFLOW_MCP_TOKEN }}
-        continue-on-error: true
+          submodules: true
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
 
-      - name: Install dependencies
+      # requirements-dev.txt traz o streamlit, para o smoke test da UI rodar.
+      - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
-          pip install pytest pytest-asyncio ruff
-          pip install 'exceptiongroup; python_version < "3.11"'
-          if [ -d "vetflow-mcp" ]; then pip install -e ./vetflow-mcp; fi
+          pip install -e ".[dev]" -e ./vendor/vetflow-mcp -r requirements-dev.txt
 
       - name: Ruff
         run: ruff check .
