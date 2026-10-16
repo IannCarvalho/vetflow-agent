@@ -1,8 +1,13 @@
-# Dependências APENAS da UI Streamlit local (app.py) — NÃO usadas pela API/deploy.
-# Instale junto com o runtime quando quiser rodar a UI alternativa localmente:
-#   pip install -r requirements.txt -r requirements-dev.txt
-#   streamlit run app.py
+# Dependências APENAS da UI Streamlit local (src/vetflow_agent/ui/app.py) — NÃO
+# usadas pela API/deploy. As ferramentas de teste e lint ficam no extra [dev] do
+# pyproject.toml (`pip install -e ".[dev]"`).
 #
-# O deploy (Render) instala só requirements.txt, mantendo o servidor enxuto —
-# streamlit arrasta pandas/pyarrow/numpy/altair, peso que a API não precisa.
-streamlit>=1.37.0
+# Para rodar a UI localmente, no mesmo venv do agente:
+#   pip install -r requirements-dev.txt
+#   streamlit run src/vetflow_agent/ui/app.py
+#
+# O deploy (Render) instala só o pacote (`pip install .`), mantendo o servidor
+# enxuto — streamlit arrasta pandas/pyarrow/numpy/altair, peso que a API não usa.
+# 1.48 é a primeira versão em que st.button aceita width="stretch", que substitui
+# o use_container_width deprecado.
+streamlit>=1.48.0

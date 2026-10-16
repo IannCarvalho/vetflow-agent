@@ -138,6 +138,26 @@ def _is_chat_model(model: str) -> bool:
     return not any(p in low for p in _NON_CHAT_PATTERNS)
 
 
+def _normalize_model_ids(models: list[str] | None, provider: str) -> list[str]:
+    """Converte a lista crua do provider no que o /chat aceita como `model`.
+
+    - Gemini: o endpoint de listagem devolve `models/<id>`, e o LiteLLM espera
+      `gemini/<id>`. Os outros providers já vêm no formato do LiteLLM.
+    - Mantém só modelos de CHAT (multiturn + tools). A listagem traz também
+      embeddings/imagem/tts/aqa, que quebram o /chat com "Multiturn chat is not
+      enabled".
+    - Remove duplicatas, preservando a ordem do provider.
+    """
+    prefix = "gemini/" if provider == "gemini" else ""
+    chat_models: list[str] = []
+    for model in models or []:
+        if prefix and not model.startswith(prefix):
+            model = prefix + model.split("/", 1)[-1]
+        if _is_chat_model(model):
+            chat_models.append(model)
+    return list(dict.fromkeys(chat_models))
+
+
 @app.post("/providers/models")
 async def list_models(req: ModelsRequest) -> dict:
     """Lista os modelos REAIS que a key do usuário pode usar (custo zero).
@@ -153,19 +173,7 @@ async def list_models(req: ModelsRequest) -> dict:
             custom_llm_provider=req.provider,
             api_key=req.api_key,
         )
-        # Normaliza para o formato LiteLLM que o /chat espera (ex.: gemini/<id>).
-        prefix = "gemini/" if req.provider == "gemini" else ""
-        norm = []
-        for m in models or []:
-            name = m.split("/", 1)[-1] if "/" in m else m
-            norm.append(f"{prefix}{name}" if prefix and not m.startswith(prefix) else m)
-        # Mantém só modelos de CHAT (multiturn + tools). O endpoint de listagem
-        # devolve também embeddings/imagem/tts/aqa, que quebram o /chat com
-        # "Multiturn chat is not enabled" -- então filtramos por nome.
-        norm = [m for m in norm if _is_chat_model(m)]
-        # Dedup preservando ordem.
-        seen: set[str] = set()
-        unique = [x for x in norm if not (x in seen or seen.add(x))]
+        unique = _normalize_model_ids(models, req.provider)
         if not unique:
             # get_valid_models engole erro de auth e devolve lista vazia; para o
             # usuário, lista vazia == key inválida ou sem acesso a modelos.

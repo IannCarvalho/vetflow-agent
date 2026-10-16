@@ -17,6 +17,17 @@ dependencies = [
     "uvicorn[standard]>=0.29.0",
 ]
 
+[project.optional-dependencies]
+# Testes e lint: `pip install -e ".[dev]"` (é o que o CI instala). A UI
+# Streamlit tem as dependências dela em requirements-dev.txt.
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.6.0",
+    # ExceptionGroup só é builtin a partir do 3.11 (usado em test_mcp_bridge).
+    "exceptiongroup>=1.2.0; python_version < '3.11'",
+]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
@@ -30,6 +41,8 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+# vendor/vetflow-mcp é o submodule do MCP: outro projeto, com o lint dele.
+extend-exclude = ["vendor"]
 
 [tool.ruff.lint]
 # Ruleset explícito para o CI e o ambiente local concordarem.
@@ -48,4 +61,3 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 # Testes podem usar asserts, credenciais fake e imports de conveniência.
 "tests/**" = ["S101", "S105", "S106"]
-"conftest.py" = ["S101"]

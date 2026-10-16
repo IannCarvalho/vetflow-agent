@@ -1,1 +1,1 @@
-﻿"""Camada HTTP (FastAPI) consumida pelo frontend do VetFlow."""
+"""Camada HTTP (FastAPI) consumida pelo frontend do VetFlow."""

@@ -1,1 +1,1 @@
-﻿"""Core do agente: loop de tool-use, selecao de provider e ponte MCP."""
+"""Core do agente: loop de tool-use, seleção de provider e ponte MCP."""

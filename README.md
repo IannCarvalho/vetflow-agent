@@ -128,18 +128,23 @@ consumido: in-process vs. subprocesso"* abaixo.
 
 ## Setup
 
-Requer **Python >= 3.10** (ideal 3.12).
+Requer **Python >= 3.10**; o CI testa de 3.10 a 3.14.
 
 ```bash
-# a partir de vetflow-agent/
+# clone COM o submodule do vetflow-mcp (num clone já feito:
+# git submodule update --init)
+git clone --recursive https://github.com/IannCarvalho/vetflow-agent.git
+cd vetflow-agent
+
 python -m venv .venv
 # Windows (PowerShell):
 .venv\Scripts\Activate.ps1
 # Linux/macOS:
 # source .venv/bin/activate
 
-pip install -e .                   # instala o vetflow-agent (src layout) + deps
-pip install -e ../vetflow-mcp      # instala o servidor MCP no mesmo venv
+pip install -e .                      # instala o vetflow-agent (src layout) + deps
+pip install -e ./vendor/vetflow-mcp   # o servidor MCP no mesmo venv, na versão do deploy
+# para editar o MCP junto, use um clone ao lado: pip install -e ../vetflow-mcp
 
 cp .env.example .env               # (ou copie manualmente no Windows)
 # edite o .env. Para rodar LOCAL contra um backend:
@@ -156,11 +161,25 @@ Rode a **API** (para o frontend consumir):
 uvicorn vetflow_agent.api.api:app --host 127.0.0.1 --port 8700
 ```
 
-Ou a **UI Streamlit** (teste rápido sem frontend):
+Ou a **UI Streamlit** (teste rápido sem frontend), que tem dependências próprias:
 
 ```bash
+pip install -r requirements-dev.txt
 streamlit run src/vetflow_agent/ui/app.py
 ```
+
+### Testes e lint
+
+```bash
+pip install -e ".[dev]"   # pytest, pytest-asyncio e ruff
+ruff check .
+pytest -q
+```
+
+Os testes não precisam de backend, chave de LLM nem credencial AWS. Dois grupos
+são pulados quando falta o pacote: o contrato com o `vetflow-mcp` real
+(`test_vetflow_mcp_real.py`, precisa do submodule instalado) e o smoke test da
+UI (`test_ui_app.py`, precisa do `requirements-dev.txt`). O CI instala os dois.
 
 ## Variáveis de ambiente
 

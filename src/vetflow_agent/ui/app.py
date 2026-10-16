@@ -1,11 +1,12 @@
 """UI em Streamlit do assistente VetFlow.
 
-Chat que roda o loop do agente Claude (agent.run_agent) sobre as ferramentas do
-servidor vetflow-mcp. Cada chamada de ferramenta é mostrada "bonitinha" num
-expander. A sidebar mostra o status da configuração -- NUNCA a senha nem a chave.
+Chat que roda o loop do agente (agent.run_agent) sobre as ferramentas do
+servidor vetflow-mcp, com o LLM que o provider.py escolher. Cada chamada de
+ferramenta é mostrada "bonitinha" num expander. A sidebar mostra o status da
+configuração -- NUNCA a senha nem a chave.
 
 IMPORTANTE: `load_dotenv()` roda no TOPO, antes de importar `agent`, para que as
-VETFLOW_* e a ANTHROPIC_API_KEY estejam no ambiente quando o agente subir o
+VETFLOW_* e as chaves de LLM estejam no ambiente quando o agente subir o
 subprocesso MCP (que herda `os.environ`).
 """
 
@@ -34,9 +35,9 @@ def _render_sidebar() -> None:
         st.header("Configuração")
 
         if provider_available():
-            st.success(f"Claude via: {describe_provider()}")
+            st.success(f"LLM: {describe_provider()}")
         else:
-            st.error("Nenhum provider do Claude configurado")
+            st.error("Nenhum provider de LLM configurado")
 
         base_url = os.environ.get("VETFLOW_BASE_URL", "(não definida)")
         email = os.environ.get("VETFLOW_EMAIL", "(não definido)")
@@ -54,7 +55,7 @@ def _render_sidebar() -> None:
         # A senha NUNCA é exibida.
 
         st.divider()
-        if st.button("Limpar conversa", use_container_width=True):
+        if st.button("Limpar conversa", width="stretch"):
             st.session_state.messages = []
             st.session_state.history = []
             st.rerun()
@@ -72,13 +73,13 @@ def _init_state() -> None:
     if "messages" not in st.session_state:
         st.session_state.messages = []  # para render (role, text, tool_calls)
     if "history" not in st.session_state:
-        st.session_state.history = []  # formato Anthropic (role/content)
+        st.session_state.history = []  # formato OpenAI (role/content), o do run_agent
 
 
 def main() -> None:
     _init_state()
     st.title("🐾 Assistente VetFlow")
-    st.caption("Converse em linguagem natural com os dados da clínica (via MCP + Claude).")
+    st.caption("Converse em linguagem natural com os dados da clínica (via MCP + LLM).")
 
     _render_sidebar()
 
@@ -93,15 +94,16 @@ def main() -> None:
     api_ok = provider_available()
     if not api_ok:
         st.warning(
-            "Nenhum provider do Claude está configurado. Defina `ANTHROPIC_API_KEY` "
-            "no `.env`, ou configure um perfil AWS com acesso ao Amazon Bedrock "
-            "(`aws configure`). A entrada fica desabilitada até lá."
+            "Nenhum provider de LLM está configurado. Defina uma chave no `.env` "
+            "(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY` ou `GEMINI_API_KEY`) ou configure "
+            "um perfil AWS com acesso ao Amazon Bedrock (`aws configure`). A entrada "
+            "fica desabilitada até lá."
         )
 
     placeholder_txt = (
         "Pergunte algo sobre a clínica..."
         if api_ok
-        else "Configure um provider do Claude para usar"
+        else "Configure um provider de LLM para usar"
     )
     prompt = st.chat_input(placeholder_txt, disabled=not api_ok)
 
@@ -148,7 +150,7 @@ def main() -> None:
         if result.text:
             st.markdown(result.text)
 
-        # Atualiza o histórico no formato Anthropic (user + assistant text).
+        # Atualiza o histórico no formato OpenAI (user + assistant text).
         st.session_state.history.append({"role": "user", "content": prompt})
         st.session_state.history.append({"role": "assistant", "content": result.text})
         st.session_state.messages.append(

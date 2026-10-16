@@ -112,6 +112,9 @@ def test_providers_models_lista_filtrada(monkeypatch):
         "gemini/gemini-2.0-flash",
         "gemini/gemini-embedding-001",  # deve ser filtrado
     ]
+    # O api.py importa o litellm no topo: o stub vale no atributo do módulo, não
+    # em sys.modules (que só afetaria um `import litellm` feito depois).
+    monkeypatch.setattr(api_mod, "litellm", litellm_stub)
     monkeypatch.setitem(sys.modules, "litellm", litellm_stub)
 
     client = TestClient(api_mod.app)
@@ -131,6 +134,7 @@ def test_providers_models_lista_vazia_e_invalida(monkeypatch):
 
     litellm_stub = types.ModuleType("litellm")
     litellm_stub.get_valid_models = lambda **kw: []  # key inválida -> litellm devolve vazio
+    monkeypatch.setattr(api_mod, "litellm", litellm_stub)
     monkeypatch.setitem(sys.modules, "litellm", litellm_stub)
 
     client = TestClient(api_mod.app)
@@ -167,3 +171,34 @@ def test_chat_repassa_bearer_como_user_token(monkeypatch):
     )
     assert r.status_code == 200
     assert captured["user_token"] == "jwt-user-123"
+
+
+# --------------------------------------------------------------------------- #
+# _normalize_model_ids (pura: sem TestClient nem litellm)
+# --------------------------------------------------------------------------- #
+def test_normalize_model_ids_gemini_prefixa_filtra_e_deduplica():
+    import vetflow_agent.api.api as api_mod
+
+    crus = [
+        "models/gemini-3.8-flash",
+        "gemini/gemini-3.8-flash",  # duplicata depois de prefixar
+        "models/gemini-embedding-001",  # não é chat
+        "models/gemini-3.6-flash",
+    ]
+    assert api_mod._normalize_model_ids(crus, "gemini") == [
+        "gemini/gemini-3.8-flash",
+        "gemini/gemini-3.6-flash",
+    ]
+
+
+def test_normalize_model_ids_outros_providers_mantem_o_id():
+    import vetflow_agent.api.api as api_mod
+
+    crus = ["gpt-6-luna", "text-embedding-3-large", "o4-mini", "gpt-6-luna", "tts-1"]
+    assert api_mod._normalize_model_ids(crus, "openai") == ["gpt-6-luna", "o4-mini"]
+
+
+def test_normalize_model_ids_lista_ausente_vira_vazia():
+    import vetflow_agent.api.api as api_mod
+
+    assert api_mod._normalize_model_ids(None, "anthropic") == []
