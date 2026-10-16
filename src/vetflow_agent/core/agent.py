@@ -15,6 +15,7 @@ traceback cru escapa para a UI.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -191,13 +192,18 @@ async def run_agent(
     """
     # Fail-fast de provider ANTES de abrir a sessão MCP: sem credencial de LLM
     # não há como responder, então resolver o provider primeiro evita levantar o
-    # MCP à toa. Checagem barata (só inspeciona o ambiente/.aws, não fala com
-    # provider nenhum). O custo pesado — `import litellm`, ~7s no 1o load — já
+    # MCP à toa. Não fala com provider nenhum, mas não é de graça: sem BYOK, a
+    # cascata consulta a cadeia de credencial AWS (ver o to_thread abaixo). O
+    # custo pesado — `import litellm`, ~7s no 1o load — já
     # foi pago no load do módulo (ver import no topo), e NÃO aqui dentro da
     # coroutine, para não bloquear o event loop (causa do restart do worker no
     # plano free: /health trava e o Render reinicia).
     try:
-        selection = select_model_with_overrides(model=model, api_key=api_key)
+        # Numa thread: sem BYOK, a cascata pode consultar a cadeia de credencial
+        # AWS, que leva ~2s fora da AWS (timeout do IMDS) até o cache esquentar.
+        selection = await asyncio.to_thread(
+            select_model_with_overrides, model=model, api_key=api_key
+        )
     except ProviderUnavailable as exc:
         return AgentResult(
             text="",

@@ -6,6 +6,9 @@ chave real. Usa o TestClient do FastAPI (síncrono).
 
 from __future__ import annotations
 
+import asyncio
+import threading
+
 import pytest
 
 try:
@@ -88,6 +91,40 @@ def test_chat_mensagem_vazia_e_422(monkeypatch):
     client, _ = _client(monkeypatch, AgentResult(text="x"))
     r = client.post("/chat", json={"message": ""})
     assert r.status_code == 422  # validação do Pydantic (min_length=1)
+
+
+@pytest.mark.parametrize("path", ["/health", "/providers"])
+async def test_endpoint_de_status_nao_trava_o_event_loop(monkeypatch, path):
+    """Regressão: o probe de provider rodava DENTRO do event loop.
+
+    Fora da AWS o probe espera o timeout do IMDS (~2s; medido no Render:
+    /health ~2s, /providers ~4s) e travava toda request concorrente. Aqui o
+    probe fica preso num Event até a request leve responder. Se o handler
+    rodasse no loop, a leve só sairia depois do timeout do Event (False).
+    """
+    import httpx
+
+    import vetflow_agent.api.api as api_mod
+
+    gate = threading.Event()
+    liberado: list[bool] = []
+
+    def provider_available_lento() -> bool:
+        liberado.append(gate.wait(timeout=2))
+        return False
+
+    monkeypatch.setattr(api_mod, "provider_available", provider_available_lento)
+    monkeypatch.setattr(api_mod, "describe_provider", lambda: "nenhum provider configurado")
+
+    transport = httpx.ASGITransport(app=api_mod.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://agent.test") as client:
+        lento = asyncio.create_task(client.get(path))
+        await asyncio.sleep(0.05)  # deixa o handler lento começar
+        leve = await client.get("/openapi.json")
+        gate.set()
+        assert (await lento).status_code == 200
+    assert leve.status_code == 200
+    assert liberado == [True]  # a request leve respondeu com o probe ainda preso
 
 
 def test_is_chat_model_filtra_nao_chat():
