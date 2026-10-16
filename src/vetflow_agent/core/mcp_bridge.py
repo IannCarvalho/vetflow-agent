@@ -1,14 +1,16 @@
-"""Ponte entre o app Streamlit e o servidor `vetflow-mcp`.
+"""Ponte entre o agente (API e UI) e o servidor `vetflow-mcp`.
 
-Sobe o `vetflow-mcp` como SUBPROCESSO via stdio (o transporte padrão do SDK
-`mcp`), descobre as tools expostas em tempo de execução, converte cada uma para
-o formato de ferramenta da Anthropic e despacha chamadas. Toda falha é
-traduzida para algo legível em PT-BR -- nenhum traceback cru escapa.
+Abre a sessão com o MCP num de dois modos (ver `connect_session`): in-process,
+que é o do deploy, ou subprocesso stdio, o default local e o mesmo do Claude
+Desktop. Descobre as tools expostas em tempo de execução, converte cada uma para
+o formato function-calling da OpenAI (o que o LiteLLM espera) e despacha
+chamadas. Toda falha é traduzida para algo legível em PT-BR -- nenhum traceback
+cru escapa.
 
-Decisão de design: o app NÃO fala com o backend Go. Ele só conhece o MCP. As
-credenciais `VETFLOW_*` são passadas para o processo filho via `env`, e é o MCP
-quem autentica no backend. Assim esta ponte é um módulo fino: ligar, listar,
-despachar, desligar.
+Decisão de design: o agente NÃO fala com o backend Go. Ele só conhece o MCP, e é
+o MCP quem autentica no backend, com o JWT do usuário logado (pass-through) ou
+com `VETFLOW_EMAIL`/`VETFLOW_PASSWORD`. Assim esta ponte é um módulo fino:
+ligar, listar, despachar, desligar.
 """
 
 from __future__ import annotations

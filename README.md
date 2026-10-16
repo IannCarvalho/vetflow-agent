@@ -33,6 +33,9 @@ src/vetflow_agent/
     └── app.py
 ```
 
+Fora do pacote ficam `tests/` (pytest) e `vendor/vetflow-mcp`, o MCP como git
+submodule, fixado no commit que o deploy instala.
+
 > Este projeto **não modifica** o `vetflow-mcp`. Apenas o consome.
 
 ## Como conecta (arquitetura)
@@ -69,8 +72,9 @@ flowchart TD
   e **nunca persistida**.
 - **`provider.py`** — decide **qual LLM**: honra `LLM_MODEL`, senão auto-detecta
   pela credencial presente (Anthropic → OpenAI → Gemini → **Bedrock `.aws`**).
-- **`mcp_bridge.py`** — sobe o `vetflow-mcp` como **subprocesso stdio**, descobre
-  as tools e as converte para function-calling da OpenAI (que o LiteLLM usa).
+- **`mcp_bridge.py`** — abre a sessão com o `vetflow-mcp` (**in-process** no
+  deploy, **subprocesso stdio** no local), descobre as tools e as converte para
+  function-calling da OpenAI (que o LiteLLM usa).
 - **`app.py`** — UI Streamlit alternativa (chat + sidebar sem segredos).
 
 ## Multi-provider (LiteLLM)
@@ -98,18 +102,65 @@ O agente roda sobre **qualquer LLM** suportado pelo LiteLLM:
 usar, já filtrados para só os de chat. Lista vazia = key inválida. O widget usa
 isso para validar a chave e popular o dropdown de modelos.
 
-## Abordagem de integração escolhida
+## Contrato da API
 
-O `vetflow-mcp` é instalado em **modo editável no mesmo venv**:
+A API não guarda estado entre requests: o histórico da conversa vem do cliente
+a cada `POST /chat`. Falhas de execução (sem provider, backend fora, key
+inválida) **não** viram status HTTP de erro: a resposta é `200` com
+`ok: false` e um `error` em PT-BR, pronto para exibir. Só corpo inválido
+devolve `422` (validação do FastAPI, ex. `message` vazia).
+
+| Endpoint | Corpo | Resposta |
+|---|---|---|
+| `GET /health` | — | `{"status": "ok", "provider_available": bool}` |
+| `GET /providers` | — | `{"available": bool, "provider": str}` (rótulo legível, sem segredos) |
+| `POST /providers/models` | `{"provider": "openai" \| "anthropic" \| "gemini", "api_key": str}` | `{"ok": bool, "models": [str], "error": str \| null}` |
+| `POST /chat` | `{"message": str, "history"?: [...], "model"?: str, "api_key"?: str}` | `{"ok": bool, "text": str, "tool_calls": [{"name": str, "arguments": {}}], "error": str \| null}` |
+
+No `POST /chat`:
+
+- **`history`** — mensagens anteriores no formato OpenAI
+  (`{"role": "user" | "assistant", "content": "..."}`).
+- **`model` + `api_key`** — BYOK: usados só nesta chamada, nunca persistidos
+  nem logados. O widget só os envia depois que o usuário configura a key; sem
+  eles vale o provider do servidor, e no deploy não há nenhum, então a resposta
+  é `ok: false` pedindo a key.
+- **`Authorization: Bearer <jwt>`** — o JWT do usuário logado no VetFlow,
+  repassado ao MCP (pass-through). Sem o header, o MCP recorre ao
+  `VETFLOW_TOKEN` ou ao email/senha do ambiente; no deploy nenhum deles existe.
+- **`tool_calls`** — as ferramentas que o agente chamou nesta rodada, em ordem,
+  com os argumentos que o modelo passou.
 
 ```bash
-pip install -e ../vetflow-mcp
+curl -X POST http://127.0.0.1:8700/chat \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <JWT do usuário>" \
+  -d '{"message": "Quais vacinas vencem este mês?", "model": "<modelo LiteLLM>", "api_key": "<key do usuário>"}'
+```
+
+```json
+{
+  "ok": true,
+  "text": "Duas vacinas vencem nos próximos 30 dias: ...",
+  "tool_calls": [{"name": "vacinas_a_vencer", "arguments": {"dias": 30}}],
+  "error": null
+}
+```
+
+## Abordagem de integração escolhida
+
+O `vetflow-mcp` é instalado em **modo editável no mesmo venv** — do submodule,
+que é a versão do deploy, ou de um clone ao lado, quando você edita os dois
+repositórios juntos:
+
+```bash
+pip install -e ./vendor/vetflow-mcp   # ou: pip install -e ../vetflow-mcp
 ```
 
 Assim o subprocesso (`python -m vetflow_mcp.server`) roda com o **mesmo
 interpretador** do app (`sys.executable`) e encontra o pacote `vetflow_mcp`.
-Nada é duplicado: você edita o MCP no seu próprio repositório e o agente passa a
-enxergar as mudanças na próxima execução.
+Nada é duplicado: com o clone ao lado, você edita o MCP no próprio repositório
+e o agente passa a enxergar as mudanças na próxima execução.
 
 ### Por que o `vetflow-mcp` é um projeto separado (e não código deste repo)
 
@@ -176,7 +227,7 @@ streamlit run src/vetflow_agent/ui/app.py
 | `VETFLOW_MCP_INPROCESS` | Consome o MCP in-process (sem subprocesso). `true` no deploy (`render.yaml`); default desligado (local/Claude Desktop usam subprocesso). |
 | `VETFLOW_EMAIL` / `VETFLOW_PASSWORD` | Login do vet — **fallback opcional**. No agente deployado a auth é pass-through (o JWT do usuário logado chega no header do `/chat`); email/senha só servem para rodar sem usuário logado. |
 | `VETFLOW_TIMEOUT_S` | Timeout HTTP em segundos (default 15). |
-| `VETFLOW_ENABLE_WRITES` | Liga as tools de escrita do MCP (default `false`). |
+| `VETFLOW_ENABLE_WRITES` | Liga as tools de escrita do MCP (default `false`). Só vale no modo subprocesso: o in-process (deploy) expõe apenas as de leitura. |
 
 As credenciais de LLM podem vir do ambiente (acima, **só em execução local**)
 **ou** por request (BYOK, o widget manda a key do usuário — o único caminho no
@@ -346,7 +397,7 @@ O app foi feito para **não quebrar** quando falta configuração:
 ## Nota sobre o fluxo end-to-end
 
 A estrutura, os imports e os caminhos de erro funcionam de forma isolada. Mas o
-**fluxo completo de tool-use** (o Claude de fato consultando dados) exige **dois
+**fluxo completo de tool-use** (o modelo de fato consultando dados) exige **dois
 pré-requisitos reais**:
 
 1. um **backend VetFlow no ar** (local ou remoto) acessível em `VETFLOW_BASE_URL`
